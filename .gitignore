@@ -1,0 +1,20 @@
+# Python bytecode (created by the interpreter)
+__pycache__/
+*.pyc
+
+# Virtual environment folder (e.g., created by 'python -m venv venv')
+venv/
+.venv/
+
+# Local environment variables containing secrets
+.env
+.env.*
+
+# Uvicorn/ASGI logs or files
+*.log
+
+# VSCode files
+.vscode/
+
+# MacOS/Linux files
+.DS_Store
