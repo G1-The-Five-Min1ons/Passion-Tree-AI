@@ -1,0 +1,1 @@
+# ส่วนที่คุยกับ Vector DB (Qdrant)
