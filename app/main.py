@@ -1,20 +1,10 @@
 from fastapi import FastAPI
+from app.api.router import api_router
 
 app = FastAPI(
     title="AI Inference Service",
-    description="Health check only for AI Microservice.",
+    description="AI Microservice for Passion Tree - Topic Analysis, Sentiment Analysis, and Recommendations",
+    version="1.0.0"
 )
 
-@app.get("/")
-def health_check():
-    return {
-        "status": "ok",
-        "service": "Start FastAPI AI",
-    }
-
-@app.get("/health")
-def health_check():
-    return {
-        "status": "ok",
-        "service": "AI Inference Engine",
-    }
+app.include_router(api_router, prefix="/api/v1")
