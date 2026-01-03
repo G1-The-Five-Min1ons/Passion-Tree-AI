@@ -32,6 +32,34 @@ class UpsertRequest(BaseModel):
     id: Any = Field(..., description="Resource ID from SQL Database")
     payload: Dict[str, Any] = Field(..., description="Flexible resource data (e.g. title, description, category_id)")
 
+class SyncLearningPathRequest(BaseModel):
+    """Schema for syncing learning path from GO backend to Qdrant"""
+    path_id: int = Field(..., description="Learning path ID from SQL Database")
+    title: str = Field(..., description="Learning path title")
+    description: str = Field(..., description="Learning path description")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata for filtering (e.g. category_id, difficulty, tags)")
+    collection_name: str = Field(default="learning_paths", description="Target collection name in Qdrant")
+
+class SyncResponse(BaseModel):
+    """Response for sync operations"""
+    success: bool
+    message: str
+    path_id: Optional[int] = None
+
+class BulkSyncRequest(BaseModel):
+    """Schema for bulk syncing multiple learning paths (initial sync)"""
+    learning_paths: List[SyncLearningPathRequest] = Field(..., description="List of learning paths to sync")
+    collection_name: str = Field(default="learning_paths", description="Target collection name in Qdrant")
+
+class BulkSyncResponse(BaseModel):
+    """Response for bulk sync operations"""
+    success: bool
+    message: str
+    total: int
+    succeeded: int
+    failed: int
+    errors: List[str] = Field(default_factory=list)
+
 
 # --- Response Schemas ---
 
