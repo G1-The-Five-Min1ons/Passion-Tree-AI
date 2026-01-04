@@ -80,14 +80,4 @@ class SearchRepository:
             collection_name=collection_name,
             points_selector=models.PointIdsList(points=[point_id])
         )
-        
-# results = repo.search(
-#     collection_name="learning_paths",
-#     query_vector=[0.11, -0.23, 0.45, ...], # ต้องแปลง Input Embedding
-#     top_k=5,
-#     filters={
-#         "topic": "AI",            # Filter แบบ MatchValue (Keyword)
-#         "rating": {"gte": 4.0},   # Filter แบบ Range (Numeric)
-#         "progress": {"lt": 100}   # Filter เฉพาะที่ยังเรียนไม่จบ
-#     }
-# )
+    
