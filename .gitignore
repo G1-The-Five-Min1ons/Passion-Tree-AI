@@ -18,3 +18,11 @@ venv/
 
 # MacOS/Linux files
 .DS_Store
+
+# AI
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+.locks/
