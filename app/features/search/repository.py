@@ -53,7 +53,7 @@ class SearchRepository:
             SearchResult(
                 id=hit.id,
                 score=hit.score,
-                payload=hit.payload
+                payload=hit.payload if with_payload else {}
             ) for hit in search_results.points
         ]
 
