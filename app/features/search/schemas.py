@@ -90,7 +90,6 @@ class SearchResponse(BaseModel):
                         "score": 0.895,
                         "payload": {
                             "title": "Go Fundamental",
-                            "description": "Learn the basics of Go programming from scratch",
                             "category_id": 10
                         }
                     }

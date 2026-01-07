@@ -55,10 +55,9 @@ class SearchService:
         # สร้าง Vector จาก Title + Description
         vector = self.embedding.get_path_vector(title, description)
         
-        # รวม title, description เข้ากับ metadata
+        # เก็บเฉพาะ title ใน payload
         payload = {
             "title": title,
-            "description": description,
             **metadata  # เพิ่ม metadata อื่นๆ เช่น category_id, difficulty
         }
         
