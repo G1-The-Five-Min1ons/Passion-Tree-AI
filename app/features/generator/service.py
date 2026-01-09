@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException
 from typing import List
-from tenacity import retry, stop_after_attempt, wait_fixed
+# from tenacity import retry, stop_after_attempt, wait_fixed
 import logging
 import os
 import re
@@ -88,7 +88,8 @@ class GeneratorService:
             used_context=used_examples
         )
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+    # @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+    
     async def _call_groq_api(self, prompt: str) -> str:
         try:
             client = AsyncGroq(
