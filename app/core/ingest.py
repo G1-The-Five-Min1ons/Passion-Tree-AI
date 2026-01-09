@@ -1,6 +1,16 @@
+import sys
 import json
 import asyncio
 import os
+from dotenv import load_dotenv
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(current_dir))
+sys.path.append(project_root)
+
+dotenv_path = os.path.join(project_root, ".env")
+load_dotenv(dotenv_path)
+
 from app.features.search.repository import SearchRepository
 from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client, create_collection_if_not_exists
