@@ -17,7 +17,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt && \
     pip install watchfiles
 
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
+RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
+    SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); \
+    CrossEncoder('BAAI/bge-reranker-v2-m3')"
 
 COPY . .
 
