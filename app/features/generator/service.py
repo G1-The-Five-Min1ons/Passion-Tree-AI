@@ -102,7 +102,7 @@ class GeneratorService:
                         "content": prompt,
                     }
                 ],
-                model="llama3-70b-8192", 
+                model="llama-3.3-70b-versatile", 
                 temperature=0.3,
                 max_tokens=1024,
             )
@@ -134,15 +134,15 @@ class GeneratorService:
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         if not results:
             return []
+        
         pairs = [
             [query, f"{hit.payload.get('question', '')} {hit.payload.get('answer', '')}"] 
             for hit in results
         ]
-        scores = self.reranker.predict(pairs)
         
-        for i, hit in enumerate(results):
-            hit.rerank_score = scores[i]
-            
-        sorted_results = sorted(results, key=lambda x: x.rerank_score, reverse=True)
-
-        return sorted_results[:top_k]
+        scores = self.reranker.predict(pairs)
+        results_with_scores = list(zip(results, scores))
+        results_with_scores.sort(key=lambda x: x[1], reverse=True)
+        final_results = [hit for hit, score in results_with_scores[:top_k]]
+        
+        return final_results
