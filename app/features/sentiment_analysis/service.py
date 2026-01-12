@@ -12,14 +12,14 @@ from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
 from sentence_transformers import CrossEncoder
 from groq import AsyncGroq
-from .reflection_schema import ReflectionRequest, ReflectionResponse
+from .schema import SentimentRequest, SentimentResponse, LLMAnalysis
 
 logger = logging.getLogger(__name__)
 
 def get_search_repository(client: QdrantClient = Depends(get_qdrant_client)) -> SearchRepository:
     return SearchRepository(client=client)
 
-class ReflectionService:
+class SentimentService:
     def __init__(self,
         search_repo: SearchRepository = Depends(get_search_repository),
         embedding: EmbeddingService = Depends(EmbeddingService),
@@ -28,20 +28,21 @@ class ReflectionService:
         self.search_repo = search_repo
         self.embedding = embedding
         self.sentiment_service = sentiment_service
-        self.collection_name = "learning_reflections"
+        self.collection_name = "reflection_analysis"
         
         print("Loading Reranker Model...")
         self.reranker = CrossEncoder('BAAI/bge-reranker-v2-m3', max_length=512)
         print("Reranker Loaded!")
 
-    async def analyze_reflection(self, request: ReflectionRequest) -> ReflectionResponse:
+    async def analyze_reflection(self, request: SentimentRequest) -> SentimentResponse:
         """
         Analyze user reflection with sentiment analysis and reranking of similar reflections.
         """
         logger.info(f"Analyzing reflection for topic: {request.what_learned}")
 
         sentiment = self.sentiment_service.analyze(request.feelings_after_learning)
-        
+
+        #learnignfeeling reflection to embedding
         combined_query = f"{request.what_learned} {request.feelings_after_learning}"
         query_vector = self.embedding.generate_vector(combined_query)
         
@@ -53,14 +54,9 @@ class ReflectionService:
         
         reranked_results = self._rerank_results(combined_query, initial_results, top_k=5)
         
-        context_str = ""
-        used_examples = []
-        for i, res in enumerate(reranked_results):
-            reflection_text = res.payload.get("reflection", "")
-            analysis = res.payload.get("analysis", "")
-            
-            used_examples.append(reflection_text)
-            context_str += f"[Example {i+1}]\nUser Reflection: {reflection_text}\nAI Analysis: {analysis}\n\n"
+        # Build few-shot examples from Qdrant with proper structure
+        context_str = self._build_few_shot_examples(reranked_results)
+        used_examples = self._extract_used_examples(reranked_results)
         
         prompt = self._build_reflection_prompt(request, context_str)
         
@@ -71,40 +67,72 @@ class ReflectionService:
             raw_analysis = ""
         
         final_analysis = self._validate_and_clean_analysis(raw_analysis, request)
-        
-        overall_score = self._calculate_reflection_score(request)
-        
-        return ReflectionResponse(
+        reflection_score = 0.0
+        if isinstance(final_analysis, dict):
+            try:
+                reflection_score = float(final_analysis.get("score", 0))
+            except (TypeError, ValueError):
+                reflection_score = 0.0
+
+        return SentimentResponse(
             summary=final_analysis,
             sentiment=sentiment,
-            overall_score=overall_score,
+            reflection_score=reflection_score,
             reranked_results=used_examples
         )
 
-    def _build_reflection_prompt(self, request: ReflectionRequest, context_str: str) -> str:
+    def _build_few_shot_examples(self, results: list) -> str:
+        """
+        Build few-shot examples from Qdrant results.
+        Extracts learning_reflect, feeling_reflect, score, and sentiment from payload.
+        """
+        if not results:
+            return ""
+        
+        context_str = ""
+        for i, res in enumerate(results):
+            payload = res.payload
+            learning_reflect = payload.get("learning_reflect", "")
+            feeling_reflect = payload.get("feeling_reflect", "")
+            score = payload.get("score", 5)
+            sentiment = payload.get("sentiment", "Neutral")
+            
+            context_str += f"[Example {i+1}]\nUser Input:\n- Learning Reflect: {learning_reflect}\n- Feeling Reflect: {feeling_reflect}\nExpected Output:\n- Score: {score}\n- Sentiment: {sentiment}\n\n"
+        
+        return context_str
+
+    def _extract_used_examples(self, results: list) -> List[str]:
+        """Extract learning_reflect texts from results for response."""
+        used_examples = []
+        for res in results:
+            payload = res.payload
+            learning_reflect = payload.get("learning_reflect", "")
+            if learning_reflect:
+                used_examples.append(learning_reflect)
+        return used_examples
+
+    def _build_reflection_prompt(self, request: SentimentRequest, context_str: str) -> str:
         """Build the base prompt with few-shot examples for reflection analysis."""
         prompt = f"""
 You are an expert learning coach specializing in reflection analysis and progress tracking.
 Your task is to analyze the user's learning reflection and provide insightful feedback.
 
-Use the following examples to understand the required analysis format:
+Use the following examples (structure matches reflection.json: learning_reflect, feeling_reflect, score 1-10, sentiment) to understand the required analysis format:
 --------------------------------------------------
 {context_str}
 --------------------------------------------------
 
 User's Reflection Input:
-- What Learned: {request.what_learned}
-- Mood (1-5): {request.mood}
-- Feelings After Learning: {request.feelings_after_learning}
-- Progress (1-5): {request.progress}
-- Challenge Level (1-5): {request.challenge_level}
+- Learning Reflect: {request.what_learned}
+- Feeling Reflect: {request.feelings_after_learning}
 
 Instructions:
 1. Analyze the user's learning experience holistically
-2. Provide sentiment-aware feedback based on their mood and feelings
-3. Identify key strengths and areas for improvement
-4. Generate actionable recommendations for continued learning
-5. Format output as JSON with keys: analysis, recommendation, next_steps
+2. Predict a sentiment label (Positive, Neutral, Negative) consistent with the feeling text
+3. Assign a reflection score from 1-10 where 1-3 = negative struggle, 4-6 = mixed/neutral, 7-8 = positive, 9-10 = very positive and confident
+4. Identify key strengths and areas for improvement
+5. Generate actionable recommendations for continued learning
+6. Respond ONLY with a single JSON object with keys: analysis, recommendation, next_steps, score, sentiment
 
 Answer:
 """
@@ -136,50 +164,58 @@ Answer:
             logger.error(f"Groq API Error: {e}", exc_info=True)
             return "Error: Unable to generate analysis at this moment."
     
-    def _validate_and_clean_analysis(self, text: str, request: ReflectionRequest) -> str:
-        """Validate and clean the LLM output."""
+    def _validate_and_clean_analysis(self, text: str, request: SentimentRequest) -> dict:
+        """Validate and clean the LLM output against the strict schema.
+
+        - Extract JSON object from the text
+        - Parse it
+        - Validate shape and values using Pydantic
+        - Normalize minor casing issues for sentiment
+        - Fallback to a safe default if anything fails
+        """
         try:
-            json_match = re.search(r'\{.*\}', text, re.DOTALL)
-            if json_match:
-                analysis_json = json.loads(json_match.group())
-                return analysis_json
-            else:
-                logger.warning(f"No JSON found in response: {text}")
+            json_match = re.search(r'\{.*\}', text or "", re.DOTALL)
+            if not json_match:
+                logger.warning("No JSON found in LLM response; using fallback.")
                 return self._get_fallback_analysis(request)
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse JSON: {text}")
+
+            raw_obj = json.loads(json_match.group())
+
+            if not isinstance(raw_obj, dict):
+                logger.warning("LLM JSON is not an object; using fallback.")
+                return self._get_fallback_analysis(request)
+
+            # Best-effort normalization for sentiment casing if present
+            sentiment = raw_obj.get("sentiment")
+            if isinstance(sentiment, str):
+                norm = sentiment.strip().lower()
+                if norm in {"positive", "pos"}:
+                    raw_obj["sentiment"] = "Positive"
+                elif norm in {"neutral", "neu"}:
+                    raw_obj["sentiment"] = "Neutral"
+                elif norm in {"negative", "neg"}:
+                    raw_obj["sentiment"] = "Negative"
+
+            # Validate strictly with Pydantic
+            validated = LLMAnalysis.model_validate(raw_obj)
+            return validated.model_dump()
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse LLM JSON: {e}; using fallback.")
+            return self._get_fallback_analysis(request)
+        except Exception as e:
+            logger.warning(f"LLM output validation failed: {e}; using fallback.")
             return self._get_fallback_analysis(request)
 
-    def _get_fallback_analysis(self, request: ReflectionRequest) -> dict:
+    def _get_fallback_analysis(self, request: SentimentRequest) -> dict:
         """Provide fallback analysis when LLM fails."""
         return {
-            "analysis": f"You've made progress in learning {request.what_learned}. With a challenge level of {request.challenge_level}/5 and progress of {request.progress}/5, you're on the right track.",
+            "analysis": f"You've made progress in learning {request.what_learned}.",
             "recommendation": "Continue consistent practice and break down complex concepts into smaller parts.",
-            "next_steps": "Review the material again, practice with examples, and seek clarification on challenging areas."
+            "next_steps": "Review the material again, practice with examples, and seek clarification on challenging areas.",
+            "score": 7,
+            "sentiment": "Neutral"
         }
-    
-    def _calculate_reflection_score(self, request: ReflectionRequest) -> float:
-        """
-        Calculate overall reflection score (0-10) based on:
-        - Mood (1-5): Higher mood = better score
-        - Progress (1-5): Higher progress = better score
-        - Challenge Level (1-5): Balanced challenge contributes to score
-        """
-
-        #ตรงนี้เป็นการให้คะแนน reflect เดี๋ยวค่อยมาปรับทีหลังได้ตามความเหมาะสม
-
-        # Normalize mood (1-5 to 0-1)
-        mood_score = (request.mood - 1) / 4 * 100
-        
-        # Normalize progress (1-5 to 0-1)
-        progress_score = (request.progress - 1) / 4 * 100
-        
-        challenge_optimal = abs(request.challenge_level - 3)
-        challenge_score = max(0, 100 - (challenge_optimal * 15))
-        
-        overall_score = (mood_score * 0.3) + (progress_score * 0.4) + (challenge_score * 0.3)
-        
-        return round(overall_score, 2)
     
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         """Rerank search results using CrossEncoder."""
@@ -187,7 +223,7 @@ Answer:
             return []
         
         pairs = [
-            [query, f"{hit.payload.get('reflection', '')} {hit.payload.get('analysis', '')}"]
+            [query, f"{hit.payload.get('learning_reflect', '')} {hit.payload.get('feeling_reflect', '')}"]
             for hit in results
         ]
         
