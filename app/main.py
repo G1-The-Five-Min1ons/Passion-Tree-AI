@@ -7,6 +7,7 @@ from app.core.reranker_store import RerankerModelStore
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(load_model_in_background())
+    yield
     
 async def load_model_in_background():
     try:

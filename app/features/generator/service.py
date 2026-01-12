@@ -23,7 +23,7 @@ class GeneratorService:
         self.search_repo = search_repo
         self.embedding = embedding
         self.collection_name = "learning_paths_nodes"
-        self.reranker = RerankerModelStore.get_model()
+        self.reranker_model = RerankerModelStore.get_model()
 
     async def generate_learning_path(self, request: GenerateRequest) -> GenerateResponse:
         query = request.topic
