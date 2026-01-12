@@ -1,5 +1,14 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Literal
+
+
+class LLMAnalysis(BaseModel):
+    """Strict schema for validating LLM output"""
+    analysis: str = Field(..., description="Detailed analysis of the learning reflection")
+    recommendation: str = Field(..., description="Recommendations for improving learning")
+    next_steps: str = Field(..., description="Suggested next steps for the learner")
+    score: float = Field(..., ge=1, le=10, description="Reflection score from 1-10")
+    sentiment: Literal["Positive", "Neutral", "Negative"] = Field(..., description="Sentiment classification")
 
 
 class SentimentRequest(BaseModel):
@@ -17,9 +26,6 @@ class SentimentRequest(BaseModel):
 
 class SentimentResponse(BaseModel):
     """AI-generated analysis of the learning reflection"""
-    summary: Dict[str, Any] = Field(
-        ..., description="Detailed analysis with keys: analysis, recommendation, next_steps, score, sentiment"
-    )
     sentiment: str = Field(..., description="Detected sentiment from the reflection")
     reflection_score: float = Field(..., ge=0, le=10, description="Reflection score (1-10) predicted from the reflection")
     reranked_results: List[str] = Field(..., description="Similar reflections from database for few-shot learning")

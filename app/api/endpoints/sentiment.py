@@ -14,9 +14,9 @@ async def analyze_sentiment(
     service: SentimentService = Depends()
 ):
     try:
-        logger.info("Analyzing sentiment for input text")
-        sentiment, score = service.analyze(request.text)
-        return SentimentResponse(sentiment=sentiment, score=score)
+        logger.info(f"Analyzing reflection for: {request.what_learned}")
+        result = await service.analyze_reflection(request)
+        return result
     except Exception as e:
         logger.error(f"Sentiment analysis error: {e}")
         raise HTTPException(

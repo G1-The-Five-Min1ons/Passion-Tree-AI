@@ -6,7 +6,6 @@ import re
 import json
 from tenacity import retry, stop_after_attempt, wait_fixed
 from app.features.search.repository import SearchRepository
-from app.features.sentiment_analysis.service import SentimentAnalysisService
 from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
@@ -22,12 +21,10 @@ def get_search_repository(client: QdrantClient = Depends(get_qdrant_client)) -> 
 class SentimentService:
     def __init__(self,
         search_repo: SearchRepository = Depends(get_search_repository),
-        embedding: EmbeddingService = Depends(EmbeddingService),
-        sentiment_service: SentimentAnalysisService = Depends(SentimentAnalysisService)
+        embedding: EmbeddingService = Depends(EmbeddingService)
     ):
         self.search_repo = search_repo
         self.embedding = embedding
-        self.sentiment_service = sentiment_service
         self.collection_name = "reflection_analysis"
         
         print("Loading Reranker Model...")
@@ -39,8 +36,6 @@ class SentimentService:
         Analyze user reflection with sentiment analysis and reranking of similar reflections.
         """
         logger.info(f"Analyzing reflection for topic: {request.what_learned}")
-
-        sentiment = self.sentiment_service.analyze(request.feelings_after_learning)
 
         #learnignfeeling reflection to embedding
         combined_query = f"{request.what_learned} {request.feelings_after_learning}"
@@ -68,14 +63,15 @@ class SentimentService:
         
         final_analysis = self._validate_and_clean_analysis(raw_analysis, request)
         reflection_score = 0.0
+        sentiment = "Neutral"
         if isinstance(final_analysis, dict):
             try:
                 reflection_score = float(final_analysis.get("score", 0))
             except (TypeError, ValueError):
                 reflection_score = 0.0
+            sentiment = final_analysis.get("sentiment", "Neutral")
 
         return SentimentResponse(
-            summary=final_analysis,
             sentiment=sentiment,
             reflection_score=reflection_score,
             reranked_results=used_examples
