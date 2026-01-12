@@ -1,16 +1,12 @@
-from fastapi import Depends, HTTPException
-from typing import List
-from tenacity import retry, stop_after_attempt, wait_fixed
+from fastapi import Depends
 import logging
-import os
 import re
 from app.features.search.repository import SearchRepository
 from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
-from sentence_transformers import CrossEncoder
-from groq import AsyncGroq
-
+from app.core.llm_client import call_groq_api
+from app.core.reranker_store import RerankerModelStore
 from .schema import GenerateRequest, GenerateResponse
 
 logger = logging.getLogger(__name__)
@@ -27,10 +23,7 @@ class GeneratorService:
         self.search_repo = search_repo
         self.embedding = embedding
         self.collection_name = "learning_paths_nodes"
-        
-        print("Loading Reranker Model...")
-        self.reranker = CrossEncoder('BAAI/bge-reranker-v2-m3', max_length=512)
-        print("Reranker Loaded!")
+        self.reranker = RerankerModelStore.get_model()
 
     async def generate_learning_path(self, request: GenerateRequest) -> GenerateResponse:
         query = request.topic
@@ -75,9 +68,9 @@ class GeneratorService:
         """
 
         try:
-            raw_text = await self._call_groq_api(prompt)
+            raw_text = await call_groq_api(prompt)
         except Exception as e:
-            logger.error(f"AI Generation Failed: {e}")
+            logger.error(f"AI Generation Failed after retries: {e}")
             raw_text = ""
         
         final_result = self._validate_and_clean_output(raw_text, query)
@@ -87,31 +80,6 @@ class GeneratorService:
             result=final_result,
             used_context=used_examples
         )
-
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-    async def _call_groq_api(self, prompt: str) -> str:
-        try:
-            client = AsyncGroq(
-                api_key=os.environ.get("GROQ_API_KEY"),
-            )
-
-            chat_completion = await client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                model="llama-3.3-70b-versatile", 
-                temperature=0.3,
-                max_tokens=1024,
-            )
-
-            return chat_completion.choices[0].message.content
-
-        except Exception as e:
-            logger.error(f"Groq API Error: {e}", exc_info=True)
-            return "Error: Unable to generate learning path at this moment."
         
     def _validate_and_clean_output(self, text: str, topic: str) -> str:
         pattern = r"(Node\s+\d+:\s+[^,]+)"
@@ -131,6 +99,17 @@ class GeneratorService:
             f"Node 4: Advanced Topics in {topic}"
         )
         
+    def _get_reranker_safe(self):
+        if self.reranker_model is None:
+            self.reranker_model = RerankerModelStore.get_model()
+            
+            if self.reranker_model is None:
+                logger.warning("Model not ready yet. Force loading in main thread...")
+                RerankerModelStore.load_model()
+                self.reranker_model = RerankerModelStore.get_model()
+        
+        return self.reranker_model
+        
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         if not results:
             return []
@@ -140,7 +119,8 @@ class GeneratorService:
             for hit in results
         ]
         
-        scores = self.reranker.predict(pairs)
+        reranker = self._get_reranker_safe()
+        scores = reranker.predict(pairs)
         results_with_scores = list(zip(results, scores))
         results_with_scores.sort(key=lambda x: x[1], reverse=True)
         final_results = [hit for hit, score in results_with_scores[:top_k]]

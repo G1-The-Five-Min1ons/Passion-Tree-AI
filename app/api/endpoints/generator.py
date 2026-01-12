@@ -20,5 +20,5 @@ async def generate_learning_path(
         logger.error(f"Generation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Generation failed: {str(e)}"
+            detail=f"Generation failed: {e}"
         )
