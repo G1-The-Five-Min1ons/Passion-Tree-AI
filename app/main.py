@@ -1,5 +1,6 @@
 import asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from contextlib import asynccontextmanager
 from app.core.reranker_store import RerankerModelStore
@@ -22,5 +23,17 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+@app.exception_handler(HTTPException)
+async def custom_http_exception_handler(request: Request, exc: HTTPException):
+    """Custom exception handler to return consistent response structure."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "message": exc.detail,
+            "data": None
+        }
+    )
 
 app.include_router(api_router, prefix="/api/v1")
