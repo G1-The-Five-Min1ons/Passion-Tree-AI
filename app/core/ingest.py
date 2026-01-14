@@ -1,3 +1,5 @@
+"Bulk - Batch Insertion สำหรับ Scale เพิ่ม"
+
 import sys
 import json
 import asyncio
