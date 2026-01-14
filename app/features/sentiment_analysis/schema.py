@@ -1,0 +1,31 @@
+from pydantic import BaseModel, Field
+from typing import List, Dict, Any, Literal
+
+
+class LLMAnalysis(BaseModel):
+    """Strict schema for validating LLM output"""
+    analysis: str = Field(..., description="Detailed analysis of the learning reflection")
+    recommendation: str = Field(..., description="Recommendations for improving learning")
+    next_steps: str = Field(..., description="Suggested next steps for the learner")
+    score: float = Field(..., ge=1, le=10, description="Reflection score from 1-10")
+    sentiment: Literal["Positive", "Neutral", "Negative"] = Field(..., description="Sentiment classification")
+
+
+class SentimentRequest(BaseModel):
+    """User's learning reflection input"""
+    what_learned: str = Field(
+        ...,
+        example="เรียนเรื่องฟังก์ชันใน Python และลองเขียนด้วยตัวเอง",
+        description="What the user learned",
+    )
+    feelings_after_learning: str = Field(
+        ...,
+        example="รู้สึกสนุกและมั่นใจมากขึ้น",
+        description="How the user feels after learning",
+    )
+
+class SentimentResponse(BaseModel):
+    """AI-generated analysis of the learning reflection"""
+    sentiment: str = Field(..., description="Detected sentiment from the reflection")
+    reflection_score: float = Field(..., ge=0, le=10, description="Reflection score (1-10) predicted from the reflection")
+    reranked_results: List[str] = Field(..., description="Similar reflections from database for few-shot learning")

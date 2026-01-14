@@ -1,1 +1,0 @@
-# (Data Validation) กำหนด Input/Output JSON

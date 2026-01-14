@@ -2,6 +2,7 @@ from fastapi import APIRouter, status
 from app.core.config import settings
 from app.core.redis import redis_client
 from app.core.vector_database import qdrant_client
+from app.api.endpoints import recommend, search, sentiment
 from app.api.endpoints import recommend, reflection, search, generator
 import logging
 
@@ -63,11 +64,6 @@ api_router.include_router(
     tags=["Recommendation"]
 )
 
-api_router.include_router(
-    reflection.router,
-    prefix="/reflection",
-    tags=["Reflection & Sentiment Analysis"]
-)
 
 api_router.include_router(
     search.router,
@@ -76,6 +72,10 @@ api_router.include_router(
 )
 
 api_router.include_router(
+    sentiment.router,
+    prefix="/sentiment",
+    tags=["Sentiment Analysis"]
+)
     generator.router,
     prefix="/generator",
     tags=["Generator"]
