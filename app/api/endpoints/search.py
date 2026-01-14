@@ -20,8 +20,8 @@ async def initialize_collections(service: SearchService = Depends()):
     except Exception as e:
         logger.error(f"Initialization error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Initialization failed: {str(e)}"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to initialize Qdrant collections. Please check if Qdrant service is running."
         )
 
 @router.post("/", response_model=SearchResponse)
@@ -42,8 +42,8 @@ async def search_learning_paths(
     except Exception as e:
         logger.error(f"Search error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Search failed: {str(e)}"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Search service is temporarily unavailable. Please try again later."
         )
 
 @router.post("/embed")
@@ -75,8 +75,8 @@ async def sync_learning_path(
     except Exception as e:
         logger.error(f"Sync error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sync failed: {str(e)}"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vector database service is temporarily unavailable. Please try again."
         )
 
 @router.post("/sync/bulk", response_model=BulkSyncResponse)
@@ -135,8 +135,8 @@ async def delete_learning_path(
     except Exception as e:
         logger.error(f"Delete error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Delete failed: {str(e)}"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Vector database service is temporarily unavailable. Please try again."
         )
 
 @router.get("/debug/collection/{collection_name}")
@@ -146,7 +146,8 @@ async def debug_collection(collection_name: str, service: SearchService = Depend
         info = service.get_collection_info(collection_name)
         return info
     except Exception as e:
+        logger.error(f"Debug error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Debug failed: {str(e)}"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to retrieve collection information. Vector database service may be unavailable."
         )
