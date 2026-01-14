@@ -1,6 +1,7 @@
-from fastapi import Depends
+import asyncio
 import logging
 import re
+from fastapi import Depends
 from app.features.search.repository import SearchRepository
 from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
@@ -23,20 +24,21 @@ class GeneratorService:
         self.search_repo = search_repo
         self.embedding = embedding
         self.collection_name = "learning_paths_nodes"
-        self.reranker_model = RerankerModelStore.get_model()
+        self.reranker_model = None
 
     async def generate_learning_path(self, request: GenerateRequest) -> GenerateResponse:
         query = request.topic
         logger.info(f"Generating path for query: {query}")
-        query_vector = self.embedding.generate_vector(query)
+        query_vector = await asyncio.to_thread(self.embedding.generate_vector, query)
         
-        initial_results = self.search_repo.search(
+        initial_results = await asyncio.to_thread(
+            self.search_repo.search,
             collection_name=self.collection_name,
             query_vector=query_vector,
-            top_k=20 
+            top_k=20
         )
         
-        reranked_results = self._rerank_results(query, initial_results, top_k=5)
+        reranked_results = await asyncio.to_thread(self._rerank_results, query, initial_results, 5)
 
         context_str = ""
         used_examples = []
@@ -100,15 +102,12 @@ class GeneratorService:
         )
         
     def _get_reranker_safe(self):
-        if self.reranker_model is None:
-            self.reranker_model = RerankerModelStore.get_model()
-            
-            if self.reranker_model is None:
-                logger.warning("Model not ready yet. Force loading in main thread...")
-                RerankerModelStore.load_model()
-                self.reranker_model = RerankerModelStore.get_model()
-        
-        return self.reranker_model
+        model = RerankerModelStore.get_model()
+        if model is None:
+             logger.warning("Model not ready yet. Force loading (Sync blocking)...")
+             RerankerModelStore.load_model()
+             model = RerankerModelStore.get_model()
+        return model
         
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         if not results:

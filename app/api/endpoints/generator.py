@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, status, Depends
+from fastapi.responses import JSONResponse
 from app.features.generator.schema import GenerateRequest, GenerateResponse
 from app.features.generator.service import GeneratorService
 import logging
@@ -18,7 +19,11 @@ async def generate_learning_path(
         return response
     except Exception as e:
         logger.error(f"Generation error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Generation failed: {e}"
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "success": False,
+                "message": f"Generation failed",
+                "data": None
+            }
         )
