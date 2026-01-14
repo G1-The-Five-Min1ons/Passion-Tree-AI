@@ -2,7 +2,7 @@ from fastapi import APIRouter, status
 from app.core.config import settings
 from app.core.redis import redis_client
 from app.core.vector_database import qdrant_client
-from app.api.endpoints import recommend, reflection, search
+from app.api.endpoints import recommend, reflection, search, generator
 import logging
 
 logger = logging.getLogger(__name__)
@@ -73,4 +73,10 @@ api_router.include_router(
     search.router,
     prefix="/search",
     tags=["Search"]
+)
+
+api_router.include_router(
+    generator.router,
+    prefix="/generator",
+    tags=["Generator"]
 )

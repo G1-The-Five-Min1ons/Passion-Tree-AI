@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Depends, Body
+from fastapi.responses import JSONResponse
 from app.features.search.schemas import (
     SearchRequest, SearchResponse, 
     SyncLearningPathRequest, SyncResponse,
@@ -19,9 +20,13 @@ async def initialize_collections(service: SearchService = Depends()):
         return {"success": True, "message": "Collections initialized successfully"}
     except Exception as e:
         logger.error(f"Initialization error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Initialization failed: {str(e)}"
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "success": False,
+                "message": f"Initialization failed",
+                "data": None
+            }
         )
 
 @router.post("/", response_model=SearchResponse)
@@ -41,9 +46,13 @@ async def search_learning_paths(
         return response
     except Exception as e:
         logger.error(f"Search error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Search failed: {str(e)}"
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "success": False,
+                "message": f"Search failed",
+                "data": None
+            }
         )
 
 @router.post("/embed")
@@ -74,9 +83,13 @@ async def sync_learning_path(
         )
     except Exception as e:
         logger.error(f"Sync error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sync failed: {str(e)}"
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "success": False,
+                "message": f"Sync failed",
+                "data": None
+            }
         )
 
 @router.post("/sync/bulk", response_model=BulkSyncResponse)
@@ -134,9 +147,13 @@ async def delete_learning_path(
         )
     except Exception as e:
         logger.error(f"Delete error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Delete failed: {str(e)}"
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "success": False,
+                "message": f"Delete failed",
+                "data": None
+            }
         )
 
 @router.get("/debug/collection/{collection_name}")
@@ -146,7 +163,11 @@ async def debug_collection(collection_name: str, service: SearchService = Depend
         info = service.get_collection_info(collection_name)
         return info
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Debug failed: {str(e)}"
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "success": False,
+                "message": f"Debug failed",
+                "data": None
+            }
         )
