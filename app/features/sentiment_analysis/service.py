@@ -1,16 +1,15 @@
 from fastapi import Depends, HTTPException
 from typing import List
+import asyncio
 import logging
-import os
 import re
 import json
-from tenacity import retry, stop_after_attempt, wait_fixed
 from app.features.search.repository import SearchRepository
 from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
-from sentence_transformers import CrossEncoder
-from groq import AsyncGroq
+from app.core.llm_client import call_groq_api
+from app.core.reranker_store import RerankerModelStore
 from .schema import SentimentRequest, SentimentResponse, LLMAnalysis
 
 logger = logging.getLogger(__name__)
@@ -26,28 +25,23 @@ class SentimentService:
         self.search_repo = search_repo
         self.embedding = embedding
         self.collection_name = "reflection_analysis"
-        
-        print("Loading Reranker Model...")
-        self.reranker = CrossEncoder('BAAI/bge-reranker-v2-m3', max_length=512)
-        print("Reranker Loaded!")
 
     async def analyze_reflection(self, request: SentimentRequest) -> SentimentResponse:
         """
         Analyze user reflection with sentiment analysis and reranking of similar reflections.
         """
-        logger.info(f"Analyzing reflection for topic: {request.what_learned}")
-
-        #learnignfeeling reflection to embedding
         combined_query = f"{request.what_learned} {request.feelings_after_learning}"
-        query_vector = self.embedding.generate_vector(combined_query)
+        logger.info(f"Analyzing reflection for query: {combined_query}")
+        query_vector = await asyncio.to_thread(self.embedding.generate_vector, combined_query)
         
-        initial_results = self.search_repo.search(
+        initial_results = await asyncio.to_thread(
+            self.search_repo.search,
             collection_name=self.collection_name,
             query_vector=query_vector,
             top_k=20
         )
         
-        reranked_results = self._rerank_results(combined_query, initial_results, top_k=5)
+        reranked_results = await asyncio.to_thread(self._rerank_results, combined_query, initial_results, 5)
         
         # Build few-shot examples from Qdrant with proper structure
         context_str = self._build_few_shot_examples(reranked_results)
@@ -56,20 +50,20 @@ class SentimentService:
         prompt = self._build_reflection_prompt(request, context_str)
         
         try:
-            raw_analysis = await self._call_groq_api(prompt)
+            raw_text = await call_groq_api(prompt)
         except Exception as e:
             logger.error(f"AI Analysis Failed: {e}")
-            raw_analysis = ""
+            raw_text = ""
         
-        final_analysis = self._validate_and_clean_analysis(raw_analysis, request)
+        final_result = self._validate_and_clean_analysis(raw_text, request)
         reflection_score = 0.0
         sentiment = "Neutral"
-        if isinstance(final_analysis, dict):
+        if isinstance(final_result, dict):
             try:
-                reflection_score = float(final_analysis.get("score", 0))
+                reflection_score = float(final_result.get("score", 0))
             except (TypeError, ValueError):
                 reflection_score = 0.0
-            sentiment = final_analysis.get("sentiment", "Neutral")
+            sentiment = final_result.get("sentiment", "Neutral")
 
         return SentimentResponse(
             sentiment=sentiment,
@@ -133,32 +127,6 @@ Instructions:
 Answer:
 """
         return prompt
-
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-    async def _call_groq_api(self, prompt: str) -> str:
-        """Call Groq API with retry logic."""
-        try:
-            client = AsyncGroq(
-                api_key=os.environ.get("GROQ_API_KEY"),
-            )
-
-            chat_completion = await client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                model="llama-3.3-70b-versatile",
-                temperature=0.4,
-                max_tokens=1500,
-            )
-
-            return chat_completion.choices[0].message.content
-
-        except Exception as e:
-            logger.error(f"Groq API Error: {e}", exc_info=True)
-            return "Error: Unable to generate analysis at this moment."
     
     def _validate_and_clean_analysis(self, text: str, request: SentimentRequest) -> dict:
         """Validate and clean the LLM output against the strict schema.
@@ -212,7 +180,15 @@ Answer:
             "score": 7,
             "sentiment": "Neutral"
         }
-    
+        
+    def _get_reranker_safe(self):
+        model = RerankerModelStore.get_model()
+        if model is None:
+             logger.warning("Model not ready yet. Force loading (Sync blocking)...")
+             RerankerModelStore.load_model()
+             model = RerankerModelStore.get_model()
+        return model
+        
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         """Rerank search results using CrossEncoder."""
         if not results:
@@ -223,7 +199,8 @@ Answer:
             for hit in results
         ]
         
-        scores = self.reranker.predict(pairs)
+        reranker = self._get_reranker_safe()
+        scores = reranker.predict(pairs)
         results_with_scores = list(zip(results, scores))
         results_with_scores.sort(key=lambda x: x[1], reverse=True)
         final_results = [hit for hit, score in results_with_scores[:top_k]]

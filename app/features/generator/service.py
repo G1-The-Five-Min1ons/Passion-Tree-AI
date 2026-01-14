@@ -24,7 +24,6 @@ class GeneratorService:
         self.search_repo = search_repo
         self.embedding = embedding
         self.collection_name = "learning_paths_nodes"
-        self.reranker_model = None
 
     async def generate_learning_path(self, request: GenerateRequest) -> GenerateResponse:
         query = request.topic

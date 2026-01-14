@@ -20,6 +20,6 @@ async def analyze_sentiment(
     except Exception as e:
         logger.error(f"Sentiment analysis error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sentiment analysis failed: {str(e)}"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sentiment analysis service is temporarily unavailable. Please try again later."
         )

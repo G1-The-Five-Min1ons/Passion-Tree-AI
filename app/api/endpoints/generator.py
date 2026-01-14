@@ -19,6 +19,6 @@ async def generate_learning_path(
     except Exception as e:
         logger.error(f"Generation error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate learning path. Please check your input and try again."
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Learning path generation service is temporarily unavailable. Please try again later."
         )
