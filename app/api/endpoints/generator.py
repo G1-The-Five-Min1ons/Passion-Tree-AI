@@ -13,8 +13,9 @@ async def generate_learning_path(
     service: GeneratorService = Depends()
 ):
     try:
-        logger.info(f"Generating path for topic: {request.topic}")
+        logger.info(f"Received request for topic: {request.topic}")
         response = await service.generate_learning_path(request)
+        logger.info(f"Successfully generated learning path for topic: {request.topic}")
         return response
     except Exception as e:
         logger.error(f"Generation error: {e}")

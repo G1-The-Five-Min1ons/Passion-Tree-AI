@@ -22,7 +22,6 @@ class EmbeddingService:
         # Ensure cache directory exists for model persistence
         cache_dir = settings.MODEL_CACHE_DIR
         os.makedirs(cache_dir, exist_ok=True)
-        logger.info(f"Model cache directory: {cache_dir}")
         
         # Use cached model if available
         if EmbeddingService._model_cache is None:
@@ -35,8 +34,6 @@ class EmbeddingService:
                 threads=threads  # Optimize for multi-threading
             )
             logger.info(f"FastEmbed initialized with {threads} threads at {cache_dir}")
-        else:
-            logger.info(f"Using cached FastEmbed model: {model_name}")
         
         self.model = EmbeddingService._model_cache
 
@@ -50,7 +47,9 @@ class EmbeddingService:
                 batch_size=32,      # Process multiple texts in batches
                 parallel=None       # Auto-optimize parallelism
             ))
-            return embeddings[0].tolist()
+            vector = embeddings[0].tolist()
+            logger.info(f"Embedding: Generated {len(vector)}-dimensional vector")
+            return vector
             
         except Exception as e:
             logger.error(f"FastEmbed error: {e}")
@@ -59,12 +58,15 @@ class EmbeddingService:
     def generate_vectors_batch(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for multiple texts efficiently."""
         try:
+            logger.info(f"Embedding: Generating vectors for {len(texts)} texts (batch mode)")
             embeddings = list(self.model.embed(
                 texts,
                 batch_size=32,
                 parallel=None
             ))
-            return [emb.tolist() for emb in embeddings]
+            vectors = [emb.tolist() for emb in embeddings]
+            logger.info(f"Embedding: Generated {len(vectors)} vectors successfully")
+            return vectors
             
         except Exception as e:
             logger.error(f"FastEmbed batch error: {e}")

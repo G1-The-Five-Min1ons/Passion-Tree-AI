@@ -4,7 +4,9 @@ from app.features.search.repository import SearchRepository
 from app.core.embedding import EmbeddingService
 from app.features.search.schemas import SearchResponse
 from app.core.vector_database import get_qdrant_client, create_collection_if_not_exists
+from app.core.reranker_store import get_reranker_service
 from qdrant_client import QdrantClient
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,7 +31,8 @@ class SearchService:
         query: str,
         top_k: int,
         filters: Optional[Dict[str, Any]] = None,
-        resource_type: str = "learning_paths" # ตั้ง Default เป็นชื่อ collection หลัก
+        resource_type: str = "learning_paths",  # ตั้ง Default เป็นชื่อ collection หลัก
+        use_reranker: bool = True  # Enable reranking by default
     ) -> SearchResponse:
         try:
             logger.info(f"Searching in collection: {resource_type} with query: {query}")
@@ -37,15 +40,32 @@ class SearchService:
             vector = self.embedding.generate_vector(query)
             logger.info(f"Generated vector with {len(vector)} dimensions")
             
+            # Fetch more results if reranking is enabled
+            initial_top_k = min(top_k * 4, 50) if use_reranker else top_k
+            
             # เรียกใช้ search แบบ Generic โดยส่งชื่อ collection เข้าไปตรงๆ
-            results = self.repository.search(
+            initial_results = self.repository.search(
                 collection_name=resource_type, 
                 query_vector=vector, 
-                top_k=top_k, 
+                top_k=initial_top_k, 
                 filters=filters
             )
             
-            logger.info(f"Search returned {len(results)} results")
+            logger.info(f"Initial search returned {len(initial_results)} results")
+            
+            # Apply reranking if enabled
+            if use_reranker and len(initial_results) > 0:
+                logger.info(f"Applying Jina reranker to refine top {top_k} results")
+                results = await asyncio.to_thread(
+                    self._rerank_results, 
+                    query, 
+                    initial_results, 
+                    top_k
+                )
+                logger.info(f"Reranking completed, returning {len(results)} results")
+            else:
+                results = initial_results[:top_k]
+            
             return SearchResponse(query=query, total=len(results), results=results)
         except Exception as e:
             logger.error(f"Search Error: {e}", exc_info=True)
@@ -75,6 +95,30 @@ class SearchService:
         """Initialize required Qdrant collections."""
         create_collection_if_not_exists(collection_name, vector_size)
         logger.info(f"Collection '{collection_name}' initialized successfully")
+
+    def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
+        """Rerank search results using Jina Reranker API."""
+        if not results:
+            return []
+        
+        # Build query-document pairs for reranking
+        pairs = [
+            [query, hit.payload.get('title', '')] 
+            for hit in results
+        ]
+        
+        reranker = get_reranker_service()
+        scores = reranker.predict(pairs)
+        
+        # Combine results with reranker scores and sort
+        results_with_scores = list(zip(results, scores))
+        results_with_scores.sort(key=lambda x: x[1], reverse=True)
+        
+        # Return top_k reranked results
+        final_results = [hit for hit, score in results_with_scores[:top_k]]
+        
+        logger.info(f"Reranked {len(results)} results, returning top {len(final_results)}")
+        return final_results
 
     def get_collection_info(self, collection_name: str) -> Dict[str, Any]:
         """Get collection information and sample points for debugging."""

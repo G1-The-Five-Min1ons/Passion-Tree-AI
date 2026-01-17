@@ -32,6 +32,8 @@ class JinaRerankerService:
         query = pairs[0][0]
         documents = [pair[1] for pair in pairs]
         
+        logger.info(f"Reranker: Processing {len(documents)} documents...")
+        
         payload = {
             "model": self.model,
             "query": query,
@@ -58,6 +60,7 @@ class JinaRerankerService:
                 score = result["relevance_score"]
                 scores[idx] = score
             
+            logger.info(f"Reranker: Completed (score range: [{min(scores):.3f}, {max(scores):.3f}])")
             return scores
             
         except requests.exceptions.RequestException as e:
