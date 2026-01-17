@@ -2,7 +2,6 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    SENTENCE_TRANSFORMERS_HOME=/models \
     PIP_NO_CACHE_DIR=off
 
 WORKDIR /app
@@ -16,10 +15,6 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt && \
     pip install watchfiles
-
-RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; \
-    SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); \
-    CrossEncoder('BAAI/bge-reranker-v2-m3')"
 
 COPY . .
 

@@ -1,14 +1,68 @@
-from sentence_transformers import SentenceTransformer
 from typing import List
+from app.core.config import settings
+from qdrant_client import QdrantClient
+from fastembed import TextEmbedding
+import logging
+import os
+
+logger = logging.getLogger(__name__)
 
 class EmbeddingService:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        self.model = SentenceTransformer(model_name)
+    _model_cache = None  # Class-level cache to avoid re-downloading
+    
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
+        self.client = QdrantClient(
+            url=settings.QDRANT_URL,
+            api_key=settings.QDRANT_API_KEY,
+            timeout=settings.QDRANT_TIMEOUT,
+            prefer_grpc=False
+        )
+        self.model_name = model_name
+        
+        # Use cached model if available
+        if EmbeddingService._model_cache is None:
+            logger.info(f"Loading FastEmbed model: {model_name} (first time only)")
+            # Set threads for ONNX Runtime to use all available CPU cores
+            threads = os.cpu_count() or 4
+            EmbeddingService._model_cache = TextEmbedding(
+                model_name=model_name,
+                threads=threads  # Optimize for multi-threading
+            )
+            logger.info(f"FastEmbed initialized with {threads} threads")
+        else:
+            logger.info(f"Using cached FastEmbed model: {model_name}")
+        
+        self.model = EmbeddingService._model_cache
 
     def generate_vector(self, text: str) -> List[float]:
-        """Converts text to a vector locally on your CPU/GPU."""
-        embedding = self.model.encode(text)
-        return embedding.tolist()
+        """Generate embeddings using FastEmbed with parallel processing."""
+        try:
+            # Use parallel parameter for better concurrent request handling
+            # parallel=None uses optimal batch processing automatically
+            embeddings = list(self.model.embed(
+                [text],
+                batch_size=32,      # Process multiple texts in batches
+                parallel=None       # Auto-optimize parallelism
+            ))
+            return embeddings[0].tolist()
+            
+        except Exception as e:
+            logger.error(f"FastEmbed error: {e}")
+            raise Exception(f"Failed to generate embeddings: {e}")
+    
+    def generate_vectors_batch(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for multiple texts efficiently."""
+        try:
+            embeddings = list(self.model.embed(
+                texts,
+                batch_size=32,
+                parallel=None
+            ))
+            return [emb.tolist() for emb in embeddings]
+            
+        except Exception as e:
+            logger.error(f"FastEmbed batch error: {e}")
+            raise Exception(f"Failed to generate batch embeddings: {e}")
 
     def prepare_learning_path_text(self, title: str, description: str) -> str:
         return f"Learning Path Title: {title}. Content Summary: {description}"

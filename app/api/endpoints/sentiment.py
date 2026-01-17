@@ -23,3 +23,17 @@ async def analyze_sentiment(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Sentiment analysis service is temporarily unavailable. Please try again later."
         )
+
+# Debug endpoint to check collection info (reuse logic from search.py)
+@router.get("/debug/collection/{collection_name}")
+async def debug_collection(collection_name: str, service: SentimentService = Depends()):
+    """Debug endpoint to check collection info for sentiment collection."""
+    try:
+        info = service.get_collection_info(collection_name)
+        return info
+    except Exception as e:
+        logger.error(f"Debug error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to retrieve collection information. Vector database service may be unavailable."
+        )

@@ -1,5 +1,5 @@
 from fastapi import Depends, HTTPException
-from typing import List
+from typing import List, Dict, Any
 import asyncio
 import logging
 import re
@@ -9,7 +9,7 @@ from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
 from app.core.llm_client import call_groq_api
-from app.core.reranker_store import RerankerModelStore
+from app.core.reranker_store import get_reranker_service
 from .schema import SentimentRequest, SentimentResponse, LLMAnalysis
 
 logger = logging.getLogger(__name__)
@@ -181,16 +181,8 @@ Answer:
             "sentiment": "Neutral"
         }
         
-    def _get_reranker_safe(self):
-        model = RerankerModelStore.get_model()
-        if model is None:
-             logger.warning("Model not ready yet. Force loading (Sync blocking)...")
-             RerankerModelStore.load_model()
-             model = RerankerModelStore.get_model()
-        return model
-        
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
-        """Rerank search results using CrossEncoder."""
+        """Rerank search results using Jina Reranker API."""
         if not results:
             return []
         
@@ -199,10 +191,33 @@ Answer:
             for hit in results
         ]
         
-        reranker = self._get_reranker_safe()
+        reranker = get_reranker_service()
         scores = reranker.predict(pairs)
         results_with_scores = list(zip(results, scores))
         results_with_scores.sort(key=lambda x: x[1], reverse=True)
         final_results = [hit for hit, score in results_with_scores[:top_k]]
         
         return final_results
+
+    def get_collection_info(self, collection_name: str) -> Dict[str, Any]:
+        """Get collection information and all points for debugging."""
+        client = get_qdrant_client()
+        collection_info = client.get_collection(collection_name)
+        
+        # Get all points from collection
+        points = client.scroll(
+            collection_name=collection_name,
+            limit=1000,  # Get up to 1000 points (adjust if needed)
+            with_payload=True,
+            with_vectors=False
+        )
+        
+        return {
+            "collection_name": collection_name,
+            "points_count": collection_info.points_count if hasattr(collection_info, 'points_count') else 'N/A',
+            "vectors_config": str(collection_info.config.params.vectors) if hasattr(collection_info.config.params, 'vectors') else 'N/A',
+            "sample_points": [
+                {"id": p.id, "payload": p.payload} 
+                for p in points[0]
+            ]
+        }

@@ -1,33 +1,79 @@
 import logging
-from sentence_transformers import CrossEncoder
+import requests
+from typing import List, Tuple
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-class RerankerModelStore:
-    _model = None
-    _is_loading = False
-
-    @classmethod
-    def load_model(cls):
-        if cls._model is not None:
-            return
-
-        if cls._is_loading:
-             logger.warning("Model is already loading in another thread.")
-             return
-
-        cls._is_loading = True
-        logger.info("Loading Reranker Model (Global)...")
+class JinaRerankerService:
+    """Jina Reranker API service for reranking search results."""
+    
+    def __init__(self):
+        self.api_url = "https://api.jina.ai/v1/rerank"
+        self.model = "jina-reranker-v2-base-multilingual"
+        self.headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {settings.JINA_API_KEY}"
+        }
+    
+    def predict(self, pairs: List[List[str]]) -> List[float]:
+        """Rerank query-document pairs using Jina API.
+        
+        Args:
+            pairs: List of [query, document] pairs
+            
+        Returns:
+            List of relevance scores
+        """
+        if not pairs:
+            return []
+        
+        # Extract query (same for all pairs) and documents
+        query = pairs[0][0]
+        documents = [pair[1] for pair in pairs]
+        
+        payload = {
+            "model": self.model,
+            "query": query,
+            "documents": documents,
+            "top_n": len(documents)  # Return all documents with scores
+        }
+        
         try:
-            cls._model = CrossEncoder('BAAI/bge-reranker-v2-m3', max_length=512)
-            logger.info("Reranker Model Loaded Successfully!")
+            response = requests.post(
+                self.api_url,
+                json=payload,
+                headers=self.headers,
+                timeout=30
+            )
+            response.raise_for_status()
+            
+            results = response.json()
+            
+            # Jina returns results sorted by relevance_score
+            # We need to map them back to original order
+            scores = [0.0] * len(documents)
+            for result in results.get("results", []):
+                idx = result["index"]
+                score = result["relevance_score"]
+                scores[idx] = score
+            
+            return scores
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Jina Reranker API error: {e}")
+            # Return neutral scores on error
+            return [0.5] * len(documents)
         except Exception as e:
-            logger.critical(f"Failed to load Reranker Model: {e}")
-            cls._is_loading = False
-            raise e
-        finally:
-            cls._is_loading = False
+            logger.error(f"Unexpected error in Jina reranking: {e}")
+            return [0.5] * len(documents)
 
-    @classmethod
-    def get_model(cls):
-        return cls._model
+# Singleton instance
+_reranker_service = None
+
+def get_reranker_service() -> JinaRerankerService:
+    """Get or create singleton reranker service instance."""
+    global _reranker_service
+    if _reranker_service is None:
+        _reranker_service = JinaRerankerService()
+    return _reranker_service
