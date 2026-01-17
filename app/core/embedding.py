@@ -19,6 +19,11 @@ class EmbeddingService:
         )
         self.model_name = model_name
         
+        # Ensure cache directory exists for model persistence
+        cache_dir = settings.MODEL_CACHE_DIR
+        os.makedirs(cache_dir, exist_ok=True)
+        logger.info(f"Model cache directory: {cache_dir}")
+        
         # Use cached model if available
         if EmbeddingService._model_cache is None:
             logger.info(f"Loading FastEmbed model: {model_name} (first time only)")
@@ -26,9 +31,10 @@ class EmbeddingService:
             threads = os.cpu_count() or 4
             EmbeddingService._model_cache = TextEmbedding(
                 model_name=model_name,
+                cache_dir=cache_dir,  # Persist model in specified directory
                 threads=threads  # Optimize for multi-threading
             )
-            logger.info(f"FastEmbed initialized with {threads} threads")
+            logger.info(f"FastEmbed initialized with {threads} threads at {cache_dir}")
         else:
             logger.info(f"Using cached FastEmbed model: {model_name}")
         

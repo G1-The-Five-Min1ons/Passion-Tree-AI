@@ -1,6 +1,10 @@
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from app.api.router import api_router
+from app.core.embedding import EmbeddingService
+import logging
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="AI Inference Service",
@@ -8,9 +12,19 @@ app = FastAPI(
     version="1.0.0"
 )
 
+@app.on_event("startup")
+async def startup_event():
+    try:
+        logger.info("Starting AI Service - Preloading embedding model...")
+        # Initialize EmbeddingService to trigger model download/cache
+        _ = EmbeddingService()
+        logger.info("Embedding model loaded successfully - Server ready!")
+    except Exception as e:
+        logger.error(f"Failed to preload embedding model: {e}")
+        raise
+
 @app.exception_handler(HTTPException)
 async def custom_http_exception_handler(request: Request, exc: HTTPException):
-    """Custom exception handler to return consistent response structure."""
     return JSONResponse(
         status_code=exc.status_code,
         content={
