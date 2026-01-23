@@ -2,8 +2,7 @@ from fastapi import APIRouter, status
 from app.core.config import settings
 from app.core.redis import redis_client
 from app.core.vector_database import qdrant_client
-from app.api.endpoints import recommend, search, sentiment
-from app.api.endpoints import recommend, search, generator
+from app.api.endpoints import recommend, search, sentiment, generator
 import logging
 
 logger = logging.getLogger(__name__)

@@ -15,16 +15,7 @@ from .schema import SentimentRequest, SentimentResponse, LLMAnalysis, Advanced, 
 
 logger = logging.getLogger(__name__)
 
-def detect_language(text: str) -> str:
-    """Detect if text is Thai or English.
 
-    Returns: 'thai' or 'english'
-    """
-    if not text:
-        return 'english'
-    thai_count = sum(1 for char in text if '\u0e00' <= char <= '\u0e7f')
-    total_chars = len(text.strip())
-    return 'thai' if thai_count > (total_chars * 0.2) else 'english'
 
 def get_search_repository(client: QdrantClient = Depends(get_qdrant_client)) -> SearchRepository:
     return SearchRepository(client=client)
@@ -64,11 +55,8 @@ class SentimentService:
         # Build few-shot examples from Qdrant with proper structure
         context_str = self._build_few_shot_examples(reranked_results)
         used_examples = self._extract_used_examples(reranked_results)
-
-        # Detect language from input text
-        language = detect_language(combined_query)
         
-        prompt = self._build_reflection_prompt(request, context_str, language)
+        prompt = self._build_reflection_prompt(request, context_str)
 
         try:
             raw_analysis = await self._call_groq_api(prompt)
@@ -178,88 +166,49 @@ class SentimentService:
                 used_examples.append(learning_reflect)
         return used_examples
 
-    def _build_reflection_prompt(self, request: SentimentRequest, context_str: str, language: str = 'english') -> str:
-        """Build the base prompt with few-shot examples for reflection analysis."""
+    def _build_reflection_prompt(self, request: SentimentRequest, context_str: str) -> str:
+        """Build the base prompt with few-shot examples for reflection analysis in Thai."""
         
-        if language == 'thai':
-            prompt = f"""
+        prompt = f"""
 คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์การสะท้อนความคิดและการติดตามความก้าวหน้าการเรียนรู้
 งานของคุณคือวิเคราะห์การสะท้อนความคิดการเรียนรู้ของผู้ใช้และให้ข้อมูลเชิงลึก
+
+**สำคัญ: ผู้ใช้สามารถป้อนข้อมูลเป็นภาษาไทยหรือภาษาอังกฤษก็ได้ แต่คุณต้องตอบกลับเป็นภาษาไทยเท่านั้น**
 
 ใช้ตัวอย่างต่อไปนี้ (โครงสร้างตรงกับ reflection.json: learning_reflect, feeling_reflect, score 1-10, sentiment) เพื่อทำความเข้าใจรูปแบบการวิเคราะห์ที่จำเป็น:
 --------------------------------------------------
 {context_str}
 --------------------------------------------------
 
-ข้อมูลการสะท้อนของผู้ใช้:
+ข้อมูลการสะท้อนของผู้ใช้ (อาจเป็นภาษาไทยหรืออังกฤษ):
 - สิ่งที่เรียนรู้: {request.what_learned}
 - ความรู้สึกหลังการเรียนรู้: {request.feelings_after_learning}
 
 คำแนะนำ:
-1. วิเคราะห์ประสบการณ์การเรียนรู้ของผู้ใช้อย่างองค์รวม
+1. วิเคราะห์ประสบการณ์การเรียนรู้ของผู้ใช้อย่างองค์รวม ไม่ว่าจะเป็นภาษาใด
 2. ทำนายป้ายกำกับความรู้สึก (Positive, Neutral, Negative) ที่สอดคล้องกับข้อความความรู้สึก
 3. กำหนดคะแนนการสะท้อนจาก 1-10 โดยที่ 1-3 = การต่อสู้เชิงลบ, 4-6 = แบบผสม/เป็นกลาง, 7-8 = บวก, 9-10 = บวกมากและมั่นใจ
 4. ระบุจุดแข็งหลักและพื้นที่ที่ต้องปรับปรุง
 5. สร้างคำแนะนำที่ใช้ได้จริงสำหรับการเรียนรู้ต่อเนื่อง
-6. ตอบด้วย JSON object เดียวเท่านั้นโดยมีโครงสร้างต่อไปนี้:
+6. **ตอบด้วย JSON object เดียวเท่านั้น และตอบเป็นภาษาไทยทั้งหมด ไม่ว่าผู้ใช้จะใช้ภาษาใดในการป้อนข้อมูล** โดยมีโครงสร้างดังนี้:
 {{
-  "analysis": "วิเคราะห์โดยละเอียดเกี่ยวกับการสะท้อนการเรียนรู้",
-  "recommendation": "คำแนะนำสำหรับการปรับปรุงการเรียนรู้",
-  "next_steps": "ขั้นตอนต่อไปที่แนะนำสำหรับผู้เรียน",
+  "analysis": "วิเคราะห์โดยละเอียดเกี่ยวกับการสะท้อนการเรียนรู้ (เป็นภาษาไทย)",
+  "recommendation": "คำแนะนำสำหรับการปรับปรุงการเรียนรู้ (เป็นภาษาไทย)",
+  "next_steps": "ขั้นตอนต่อไปที่แนะนำสำหรับผู้เรียน (เป็นภาษาไทย)",
   "score": <ตัวเลขระหว่าง 1-10>,
   "sentiment": "Positive|Neutral|Negative",
   "advanced": {{
-    "primary_emotion": "อารมณ์หลักที่ตรวจพบ เช่น Confident, Anxious, Frustrated, Hopeful, Neutral",
+    "primary_emotion": "อารมณ์หลักที่ตรวจพบเป็นภาษาไทย เช่น มั่นใจ, กังวล, หงุดหงิด, มีความหวัง, เฉยๆ",
     "confidence_score": <ตัวเลขระหว่าง 0-1, คำนวณจาก score/10>,
-    "struggle_point": "จุดต่อสู้หลักหรือความท้าทาย",
+    "struggle_point": "จุดต่อสู้หลักหรือความท้าทาย (เป็นภาษาไทย)",
     "learning_disposition": "Growth Mindset"
   }},
   "development_plan": {{
-    "next_steps": ["ขั้นตอน 1", "ขั้นตอน 2", "ขั้นตอน 3", "ขั้นตอน 4"]
+    "next_steps": ["ขั้นตอน 1 (ภาษาไทย)", "ขั้นตอน 2 (ภาษาไทย)", "ขั้นตอน 3 (ภาษาไทย)", "ขั้นตอน 4 (ภาษาไทย)"]
   }}
 }}
 
 คำตอบ:
-"""
-        else:
-            prompt = f"""
-You are an expert learning coach specializing in reflection analysis and progress tracking.
-Your task is to analyze the user's learning reflection and provide insightful feedback.
-
-Use the following examples (structure matches reflection.json: learning_reflect, feeling_reflect, score 1-10, sentiment) to understand the required analysis format:
---------------------------------------------------
-{context_str}
---------------------------------------------------
-
-User's Reflection Input:
-- Learning Reflect: {request.what_learned}
-- Feeling Reflect: {request.feelings_after_learning}
-
-Instructions:
-1. Analyze the user's learning experience holistically
-2. Predict a sentiment label (Positive, Neutral, Negative) consistent with the feeling text
-3. Assign a reflection score from 1-10 where 1-3 = negative struggle, 4-6 = mixed/neutral, 7-8 = positive, 9-10 = very positive and confident
-4. Identify key strengths and areas for improvement
-5. Generate actionable recommendations for continued learning
-6. Respond ONLY with a single JSON object with the following structure:
-{{
-  "analysis": "detailed analysis of the learning reflection",
-  "recommendation": "recommendations for improving learning",
-  "next_steps": "suggested next steps for the learner",
-  "score": <float between 1-10>,
-  "sentiment": "Positive|Neutral|Negative",
-  "advanced": {{
-    "primary_emotion": "primary detected emotion (e.g., Confident, Anxious, Frustrated, Hopeful, Neutral)",
-    "confidence_score": <float between 0-1, calculated as score/10>,
-    "struggle_point": "main struggle or challenge point",
-    "learning_disposition": "Growth Mindset"
-  }},
-  "development_plan": {{
-    "next_steps": ["step 1", "step 2", "step 3", ...]
-  }}
-}}
-
-Answer:
 """
         return prompt
 
@@ -335,13 +284,13 @@ Answer:
     def _get_fallback_analysis(self, request: SentimentRequest) -> dict:
         """Provide fallback analysis when LLM fails."""
         return {
-            "analysis": f"You've made progress in learning {request.what_learned}.",
-            "recommendation": "Continue consistent practice and break down complex concepts into smaller parts.",
-            "next_steps": "Review the material again, practice with examples, and seek clarification on challenging areas.",
+            "analysis": f"คุณได้มีความก้าวหน้าในการเรียนรู้เรื่อง {request.what_learned}",
+            "recommendation": "ควรฝึกฝนอย่างสม่ำเสมอและแบ่งแนวคิดที่ซับซ้อนออกเป็นส่วนเล็กๆ",
+            "next_steps": "ทบทวนเนื้อหาอีกครั้ง ฝึกปฏิบัติด้วยตัวอย่าง และขอคำชี้แจงในส่วนที่ท้าทาย",
             "score": 7,
             "sentiment": "Neutral",
             "advanced": {
-                "primary_emotion": "Neutral",
+                "primary_emotion": "เฉยๆ",
                 "confidence_score": 0.5,
                 "struggle_point": "ยังไม่สามารถวิเคราะห์ได้",
                 "learning_disposition": "Growth Mindset",
