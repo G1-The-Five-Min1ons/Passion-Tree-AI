@@ -49,10 +49,7 @@ class SentimentService:
         # Check if both inputs are blank
         if not request.what_learned.strip() and not request.feelings_after_learning.strip():
             return self._get_blank_input_response()
-
-        # Detect language
-        language = detect_language(request.what_learned + " " + request.feelings_after_learning)
-
+        
         combined_query = f"{request.what_learned} {request.feelings_after_learning}"
         query_vector = self.embedding.generate_vector(combined_query)
 
@@ -68,6 +65,9 @@ class SentimentService:
         context_str = self._build_few_shot_examples(reranked_results)
         used_examples = self._extract_used_examples(reranked_results)
 
+        # Detect language from input text
+        language = detect_language(combined_query)
+        
         prompt = self._build_reflection_prompt(request, context_str, language)
 
         try:
@@ -215,7 +215,7 @@ class SentimentService:
     "learning_disposition": "Growth Mindset"
   }},
   "development_plan": {{
-    "next_steps": ["ขั้นตอน 1", "ขั้นตอน 2"]
+    "next_steps": ["ขั้นตอน 1", "ขั้นตอน 2", "ขั้นตอน 3", "ขั้นตอน 4"]
   }}
 }}
 
@@ -255,7 +255,7 @@ Instructions:
     "learning_disposition": "Growth Mindset"
   }},
   "development_plan": {{
-    "next_steps": ["step 1", "step 2"]
+    "next_steps": ["step 1", "step 2", "step 3", ...]
   }}
 }}
 
@@ -354,7 +354,7 @@ Answer:
                 ]
             }
         }
-
+    
     def _get_blank_input_response(self) -> SentimentResponse:
         """Provide response when both inputs are blank."""
         return SentimentResponse(
@@ -365,8 +365,7 @@ Answer:
                 primary_emotion="ไม่มีข้อมูล",
                 confidence_score=0.0,
                 struggle_point="ไม่มีข้อมูล",
-                learning_disposition="ไม่มีข้อมูล",
-                consistency_check="Match"
+                learning_disposition="ไม่มีข้อมูล"
             ),
             development_plan=DevelopmentPlan(
                 next_steps=[
@@ -376,7 +375,7 @@ Answer:
             ),
             reranked_results=[]
         )
-
+        
     def _get_reranker_safe(self):
         model = RerankerModelStore.get_model()
         if model is None:
