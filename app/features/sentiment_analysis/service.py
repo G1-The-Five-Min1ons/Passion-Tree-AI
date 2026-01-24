@@ -124,7 +124,7 @@ class SentimentService:
                 if final_analysis.get("recommendation"):
                     next_steps_list.append(final_analysis.get("recommendation"))
                 if not next_steps_list:
-                    next_steps_list = ["ทบทวนเนื้อหาที่เรียนไปอีกครั้ง", "ฝึกปฏิบัติด้วยตัวอย่างเพิ่มเติม"]
+                    next_steps_list = ["Review the learned content again", "Practice with additional examples"]
                 development_plan = DevelopmentPlan(next_steps=next_steps_list)
 
         return SentimentResponse(
@@ -170,45 +170,45 @@ class SentimentService:
         """Build the base prompt with few-shot examples for reflection analysis in Thai."""
         
         prompt = f"""
-คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์การสะท้อนความคิดและการติดตามความก้าวหน้าการเรียนรู้
-งานของคุณคือวิเคราะห์การสะท้อนความคิดการเรียนรู้ของผู้ใช้และให้ข้อมูลเชิงลึก
+You are an expert in learning reflection analysis and tracking learning progress.
+Your task is to analyze user's learning reflections and provide insights.
 
-**สำคัญ: ผู้ใช้สามารถป้อนข้อมูลเป็นภาษาไทยหรือภาษาอังกฤษก็ได้ แต่คุณต้องตอบกลับเป็นภาษาไทยเท่านั้น**
+**Important: Users can input data in Thai or English, but you must respond in Thai only.**
 
-ใช้ตัวอย่างต่อไปนี้ (โครงสร้างตรงกับ reflection.json: learning_reflect, feeling_reflect, score 1-10, sentiment) เพื่อทำความเข้าใจรูปแบบการวิเคราะห์ที่จำเป็น:
+Use the following examples (structure matches reflection.json: learning_reflect, feeling_reflect, score 1-10, sentiment) to understand the required analysis pattern:
 --------------------------------------------------
 {context_str}
 --------------------------------------------------
 
-ข้อมูลการสะท้อนของผู้ใช้ (อาจเป็นภาษาไทยหรืออังกฤษ):
-- สิ่งที่เรียนรู้: {request.what_learned}
-- ความรู้สึกหลังการเรียนรู้: {request.feelings_after_learning}
+User's reflection data (may be in Thai or English):
+- What was learned: {request.what_learned}
+- Feelings after learning: {request.feelings_after_learning}
 
-คำแนะนำ:
-1. วิเคราะห์ประสบการณ์การเรียนรู้ของผู้ใช้อย่างองค์รวม ไม่ว่าจะเป็นภาษาใด
-2. ทำนายป้ายกำกับความรู้สึก (Positive, Neutral, Negative) ที่สอดคล้องกับข้อความความรู้สึก
-3. กำหนดคะแนนการสะท้อนจาก 1-10 โดยที่ 1-3 = การต่อสู้เชิงลบ, 4-6 = แบบผสม/เป็นกลาง, 7-8 = บวก, 9-10 = บวกมากและมั่นใจ
-4. ระบุจุดแข็งหลักและพื้นที่ที่ต้องปรับปรุง
-5. สร้างคำแนะนำที่ใช้ได้จริงสำหรับการเรียนรู้ต่อเนื่อง
-6. **ตอบด้วย JSON object เดียวเท่านั้น และตอบเป็นภาษาไทยทั้งหมด ไม่ว่าผู้ใช้จะใช้ภาษาใดในการป้อนข้อมูล** โดยมีโครงสร้างดังนี้:
+Instructions:
+1. Analyze the user's learning experience holistically, regardless of language used
+2. Predict sentiment label (Positive, Neutral, Negative) that aligns with the feeling text
+3. Assign a reflection score from 1-10 where 1-3 = negative struggle, 4-6 = mixed/neutral, 7-8 = positive, 9-10 = very positive and confident
+4. Identify key strengths and areas for improvement
+5. Generate actionable recommendations for continued learning
+6. **Respond with a single JSON object only, and respond entirely in Thai regardless of the language users use for input** with the following structure:
 {{
-  "analysis": "วิเคราะห์โดยละเอียดเกี่ยวกับการสะท้อนการเรียนรู้ (เป็นภาษาไทย)",
-  "recommendation": "คำแนะนำสำหรับการปรับปรุงการเรียนรู้ (เป็นภาษาไทย)",
-  "next_steps": "ขั้นตอนต่อไปที่แนะนำสำหรับผู้เรียน (เป็นภาษาไทย)",
-  "score": <ตัวเลขระหว่าง 1-10>,
+  "analysis": "Detailed analysis of the learning reflection (in Thai)",
+  "recommendation": "Recommendations for improving learning (in Thai)",
+  "next_steps": "Suggested next steps for the learner (in Thai)",
+  "score": <number between 1-10>,
   "sentiment": "Positive|Neutral|Negative",
   "advanced": {{
-    "primary_emotion": "อารมณ์หลักที่ตรวจพบเป็นภาษาไทย เช่น มั่นใจ, กังวล, หงุดหงิด, มีความหวัง, เฉยๆ",
-    "confidence_score": <ตัวเลขระหว่าง 0-1, คำนวณจาก score/10>,
-    "struggle_point": "จุดต่อสู้หลักหรือความท้าทาย (เป็นภาษาไทย)",
+    "primary_emotion": "Primary detected emotion in Thai, e.g., Confident, Anxious, Frustrated, Hopeful, Neutral",
+    "confidence_score": <number between 0-1, calculated from score/10>,
+    "struggle_point": "Main struggle point or challenge (in Thai)",
     "learning_disposition": "Growth Mindset"
   }},
   "development_plan": {{
-    "next_steps": ["ขั้นตอน 1 (ภาษาไทย)", "ขั้นตอน 2 (ภาษาไทย)", "ขั้นตอน 3 (ภาษาไทย)", "ขั้นตอน 4 (ภาษาไทย)"]
+    "next_steps": ["Step 1 (in Thai)", "Step 2 (in Thai)", "Step 3 (in Thai)", "Step 4 (in Thai)"]
   }}
 }}
 
-คำตอบ:
+Response:
 """
         return prompt
 
@@ -284,22 +284,22 @@ class SentimentService:
     def _get_fallback_analysis(self, request: SentimentRequest) -> dict:
         """Provide fallback analysis when LLM fails."""
         return {
-            "analysis": f"คุณได้มีความก้าวหน้าในการเรียนรู้เรื่อง {request.what_learned}",
-            "recommendation": "ควรฝึกฝนอย่างสม่ำเสมอและแบ่งแนวคิดที่ซับซ้อนออกเป็นส่วนเล็กๆ",
-            "next_steps": "ทบทวนเนื้อหาอีกครั้ง ฝึกปฏิบัติด้วยตัวอย่าง และขอคำชี้แจงในส่วนที่ท้าทาย",
+            "analysis": f"You have made progress in learning about {request.what_learned}",
+            "recommendation": "Practice consistently and break down complex concepts into smaller parts",
+            "next_steps": "Review the content again, practice with examples, and seek clarification on challenging parts",
             "score": 7,
             "sentiment": "Neutral",
             "advanced": {
-                "primary_emotion": "เฉยๆ",
+                "primary_emotion": "Neutral",
                 "confidence_score": 0.5,
-                "struggle_point": "ยังไม่สามารถวิเคราะห์ได้",
+                "struggle_point": "Unable to analyze yet",
                 "learning_disposition": "Growth Mindset",
                 "consistency_check": "Match"
             },
             "development_plan": {
                 "next_steps": [
-                    "ทบทวนเนื้อหาที่เรียนไปอีกครั้ง",
-                    "ฝึกปฏิบัติด้วยตัวอย่างเพิ่มเติม"
+                    "Review the learned content again",
+                    "Practice with additional examples"
                 ]
             }
         }
@@ -309,7 +309,7 @@ class SentimentService:
         return SentimentResponse(
             sentiment="Neutral",
             reflection_score=0.0,
-            summary="ไม่มีข้อมูลการเรียนรู้หรือความรู้สึกที่ให้มา",
+            summary="No learning data or feelings provided",
             advanced=Advanced(
                 primary_emotion="ไม่มีข้อมูล",
                 confidence_score=0.0,
@@ -318,8 +318,8 @@ class SentimentService:
             ),
             development_plan=DevelopmentPlan(
                 next_steps=[
-                    "กรุณาให้ข้อมูลการเรียนรู้และความรู้สึกเพื่อการวิเคราะห์ที่แม่นยำ",
-                    "ตั้งเป้าหมายการเรียนรู้ที่ชัดเจน"
+                    "Please provide learning information and feelings for accurate analysis",
+                    "Set clear learning goals"
                 ]
             ),
             reranked_results=[]
