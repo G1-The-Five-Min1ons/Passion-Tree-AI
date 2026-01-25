@@ -1,17 +1,16 @@
 from fastapi import Depends, HTTPException
-from typing import List
+from typing import List, Dict, Any
+import asyncio
 import logging
-import os
 import re
 import json
-from tenacity import retry, stop_after_attempt, wait_fixed
 from app.features.search.repository import SearchRepository
 from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
-from sentence_transformers import CrossEncoder
-from groq import AsyncGroq
-from .schema import SentimentRequest, SentimentResponse, LLMAnalysis, Advanced, DevelopmentPlan
+from app.core.llm_client import call_groq_api
+from app.core.reranker_store import get_reranker_service
+from .schema import SentimentRequest, SentimentResponse, LLMAnalysis
 
 logger = logging.getLogger(__name__)
 
@@ -29,29 +28,23 @@ class SentimentService:
         self.embedding = embedding
         self.collection_name = "reflection_analysis"
 
-        print("Loading Reranker Model...")
-        self.reranker = CrossEncoder('BAAI/bge-reranker-v2-m3', max_length=512)
-        print("Reranker Loaded!")
-
     async def analyze_reflection(self, request: SentimentRequest) -> SentimentResponse:
         """
         Analyze user reflection with sentiment analysis and reranking of similar reflections.
         """
-        # Check if both inputs are blank
-        if not request.what_learned.strip() and not request.feelings_after_learning.strip():
-            return self._get_blank_input_response()
-        
         combined_query = f"{request.what_learned} {request.feelings_after_learning}"
-        query_vector = self.embedding.generate_vector(combined_query)
-
-        initial_results = self.search_repo.search(
+        logger.info(f"Analyzing reflection for query: {combined_query}")
+        query_vector = await asyncio.to_thread(self.embedding.generate_vector, combined_query)
+        
+        initial_results = await asyncio.to_thread(
+            self.search_repo.search,
             collection_name=self.collection_name,
             query_vector=query_vector,
             top_k=20
         )
-
-        reranked_results = self._rerank_results(combined_query, initial_results, top_k=5)
-
+        
+        reranked_results = await asyncio.to_thread(self._rerank_results, combined_query, initial_results, 5)
+        
         # Build few-shot examples from Qdrant with proper structure
         context_str = self._build_few_shot_examples(reranked_results)
         used_examples = self._extract_used_examples(reranked_results)
@@ -59,7 +52,7 @@ class SentimentService:
         prompt = self._build_reflection_prompt(request, context_str)
 
         try:
-            raw_analysis = await self._call_groq_api(prompt)
+            raw_text = await call_groq_api(prompt)
         except Exception as e:
             logger.error(f"AI Analysis Failed: {e}")
             raw_analysis = ""
@@ -75,7 +68,7 @@ class SentimentService:
         
         if isinstance(final_analysis, dict):
             try:
-                reflection_score = float(final_analysis.get("score", 0))
+                reflection_score = float(final_result.get("score", 0))
             except (TypeError, ValueError):
                 reflection_score = 0.0
             sentiment = final_analysis.get("sentiment", "Neutral")
@@ -334,7 +327,7 @@ Response:
         return model
 
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
-        """Rerank search results using CrossEncoder."""
+        """Rerank search results using Jina Reranker API."""
         if not results:
             return []
 

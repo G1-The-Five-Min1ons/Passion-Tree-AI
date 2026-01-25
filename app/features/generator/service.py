@@ -7,7 +7,7 @@ from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
 from app.core.llm_client import call_groq_api
-from app.core.reranker_store import RerankerModelStore
+from app.core.reranker_store import get_reranker_service
 from .schema import GenerateRequest, GenerateResponse
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,6 @@ class GeneratorService:
         self.search_repo = search_repo
         self.embedding = embedding
         self.collection_name = "learning_paths_nodes"
-        self.reranker_model = None
 
     async def generate_learning_path(self, request: GenerateRequest) -> GenerateResponse:
         query = request.topic
@@ -101,14 +100,6 @@ class GeneratorService:
             f"Node 4: Advanced Topics in {topic}"
         )
         
-    def _get_reranker_safe(self):
-        model = RerankerModelStore.get_model()
-        if model is None:
-             logger.warning("Model not ready yet. Force loading (Sync blocking)...")
-             RerankerModelStore.load_model()
-             model = RerankerModelStore.get_model()
-        return model
-        
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         if not results:
             return []
@@ -118,7 +109,7 @@ class GeneratorService:
             for hit in results
         ]
         
-        reranker = self._get_reranker_safe()
+        reranker = get_reranker_service()
         scores = reranker.predict(pairs)
         results_with_scores = list(zip(results, scores))
         results_with_scores.sort(key=lambda x: x[1], reverse=True)

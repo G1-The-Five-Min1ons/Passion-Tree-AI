@@ -6,7 +6,9 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: Optional[str] = None
     QDRANT_TIMEOUT: int = 10
     GROQ_API_KEY: Optional[str] = None
+    JINA_API_KEY: Optional[str] = None
     REDIS_URL: str = "redis://redis:6379"
+    MODEL_CACHE_DIR: str = "./models/cache"
 
     # การตั้งค่าที่ยืดหยุ่นที่สุดสำหรับทั้ง Local และ Production
     model_config = SettingsConfigDict(

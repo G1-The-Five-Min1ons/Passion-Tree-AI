@@ -13,12 +13,13 @@ async def generate_learning_path(
     service: GeneratorService = Depends()
 ):
     try:
-        logger.info(f"Generating path for topic: {request.topic}")
+        logger.info(f"Received request for topic: {request.topic}")
         response = await service.generate_learning_path(request)
+        logger.info(f"Successfully generated learning path for topic: {request.topic}")
         return response
     except Exception as e:
         logger.error(f"Generation error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate learning path. Please check your input and try again."
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Learning path generation service is temporarily unavailable. Please try again later."
         )

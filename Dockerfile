@@ -16,8 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app ./app
 
+# Create cache directory for models
+RUN mkdir -p /app/models/cache
+
 # Use non-root user
-RUN useradd -u 10001 -r -s /usr/sbin/nologin appuser
+RUN useradd -u 10001 -r -s /usr/sbin/nologin appuser && \
+    chown -R appuser:appuser /app/models
 USER 10001
 
 EXPOSE 8000
