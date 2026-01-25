@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.core.embedding import EmbeddingService
+from app.core.reranker_store import get_reranker_service
 import logging
 
 # Configure logging
@@ -30,6 +31,9 @@ async def startup_event():
         # Initialize EmbeddingService to trigger model download/cache
         _ = EmbeddingService()
         logger.info("Embedding model loaded successfully - Server ready!")
+        # Preload Reranker API model
+        _ = get_reranker_service()
+        logger.info("Reranker API model loaded successfully - Server ready!")
     except Exception as e:
         logger.error(f"Failed to preload embedding model: {e}")
         raise
