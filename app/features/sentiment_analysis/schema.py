@@ -45,6 +45,6 @@ class SentimentResponse(BaseModel):
     sentiment: str = Field(..., description="Detected sentiment from the reflection")
     reflection_score: float = Field(..., ge=0, le=10, description="Reflection score (1-10) predicted from the reflection")
     summary: str = Field(default="", description="Summary of the learning reflection")
-    advanced: Advanced = Field(..., description="Advanced analysis metrics")
-    development_plan: DevelopmentPlan = Field(..., description="Development plan for the learner")
+    advanced: Optional[Advanced] = Field(default=None, description="Advanced analysis metrics")
+    development_plan: Optional[DevelopmentPlan] = Field(default=None, description="Development plan for the learner")
     reranked_results: List[str] = Field(default=[], description="Similar reflections from database for few-shot learning")
