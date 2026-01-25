@@ -4,13 +4,16 @@ import asyncio
 import logging
 import re
 import json
+import os
+from tenacity import retry, stop_after_attempt, wait_fixed
+from groq import AsyncGroq
 from app.features.search.repository import SearchRepository
 from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
 from app.core.llm_client import call_groq_api
 from app.core.reranker_store import get_reranker_service
-from .schema import SentimentRequest, SentimentResponse, LLMAnalysis
+from .schema import SentimentRequest, SentimentResponse, LLMAnalysis, Advanced, DevelopmentPlan
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +29,7 @@ class SentimentService:
     ):
         self.search_repo = search_repo
         self.embedding = embedding
+        self.reranker = get_reranker_service()
         self.collection_name = "reflection_analysis"
 
     async def analyze_reflection(self, request: SentimentRequest) -> SentimentResponse:
@@ -55,70 +59,32 @@ class SentimentService:
             raw_text = await call_groq_api(prompt)
         except Exception as e:
             logger.error(f"AI Analysis Failed: {e}")
-            raw_analysis = ""
+            raw_text = ""
 
-        final_analysis = self._validate_and_clean_analysis(raw_analysis, request)
+        final_analysis = self._validate_and_clean_analysis(raw_text, request)
         
-        # Extract all fields from final_analysis
-        reflection_score = 0.0
-        sentiment = "Neutral"
-        summary = ""
+        # Extract all fields from final_analysis (ใช้ค่าจาก LLM โดยตรง ไม่มี default)
+        reflection_score = final_analysis.get("score", 0.0)
+        sentiment = final_analysis.get("sentiment", "Neutral")
+        summary = final_analysis.get("analysis", "")
+        
+        # Extract advanced metrics from LLM response
         advanced = None
-        development_plan = None
+        advanced_data = final_analysis.get("advanced", {})
+        if advanced_data:
+            advanced = Advanced(
+                primary_emotion=advanced_data.get("primary_emotion"),
+                confidence_score=float(advanced_data.get("confidence_score", 0.0)),
+                struggle_point=advanced_data.get("struggle_point"),
+                learning_disposition=advanced_data.get("learning_disposition"),
+                consistency_check=advanced_data.get("consistency_check")
+            )
         
-        if isinstance(final_analysis, dict):
-            try:
-                reflection_score = float(final_result.get("score", 0))
-            except (TypeError, ValueError):
-                reflection_score = 0.0
-            sentiment = final_analysis.get("sentiment", "Neutral")
-            summary = final_analysis.get("analysis", "")
-            
-            # Extract advanced metrics
-            advanced_data = final_analysis.get("advanced", {})
-            if advanced_data:
-                advanced = Advanced(
-                    primary_emotion=advanced_data.get("primary_emotion", "Neutral"),
-                    confidence_score=float(advanced_data.get("confidence_score", 0.5)),
-                    struggle_point=advanced_data.get("struggle_point", "ไม่มีข้อมูล"),
-                    learning_disposition=advanced_data.get("learning_disposition", "Growth Mindset"),
-                    consistency_check=advanced_data.get("consistency_check", "Match")
-                )
-            else:
-                # Create default advanced metrics based on sentiment and score
-                confidence_score = reflection_score / 10.0
-                if sentiment == "Positive":
-                    primary_emotion = "Confident" if reflection_score >= 8 else "Hopeful"
-                    struggle_point = "None" if reflection_score >= 8 else "Minor challenges"
-                elif sentiment == "Negative":
-                    primary_emotion = "Anxious" if reflection_score <= 3 else "Frustrated"
-                    struggle_point = "Self-confidence" if reflection_score <= 3 else "Understanding concepts"
-                else:
-                    primary_emotion = "Neutral"
-                    struggle_point = "Mixed feelings"
-                
-                advanced = Advanced(
-                    primary_emotion=primary_emotion,
-                    confidence_score=confidence_score,
-                    struggle_point=struggle_point,
-                    learning_disposition="Growth Mindset",
-                    consistency_check="Match"
-                )
-            
-            # Extract development plan
-            dev_plan_data = final_analysis.get("development_plan", {})
-            if dev_plan_data and "next_steps" in dev_plan_data:
-                development_plan = DevelopmentPlan(next_steps=dev_plan_data["next_steps"])
-            else:
-                # Generate default next steps from recommendation and next_steps fields
-                next_steps_list = []
-                if final_analysis.get("next_steps"):
-                    next_steps_list.append(final_analysis.get("next_steps"))
-                if final_analysis.get("recommendation"):
-                    next_steps_list.append(final_analysis.get("recommendation"))
-                if not next_steps_list:
-                    next_steps_list = ["Review the learned content again", "Practice with additional examples"]
-                development_plan = DevelopmentPlan(next_steps=next_steps_list)
+        # Extract development plan from LLM response
+        development_plan = None
+        dev_plan_data = final_analysis.get("development_plan", {})
+        if dev_plan_data and "next_steps" in dev_plan_data:
+            development_plan = DevelopmentPlan(next_steps=dev_plan_data["next_steps"])
 
         return SentimentResponse(
             sentiment=sentiment,
