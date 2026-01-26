@@ -204,65 +204,35 @@ Response:
         - Parse it
         - Validate shape and values using Pydantic
         - Normalize minor casing issues for sentiment
-        - Fallback to a safe default if anything fails
+        - If parsing fails, raise exception to trigger retry
         """
-        try:
-            json_match = re.search(r'\{.*\}', text or "", re.DOTALL)
-            if not json_match:
-                logger.warning("No JSON found in LLM response; using fallback.")
-                return self._get_fallback_analysis(request)
+        json_match = re.search(r'\{.*\}', text or "", re.DOTALL)
+        if not json_match:
+            logger.error("No JSON found in LLM response")
+            raise ValueError("No JSON found in LLM response")
 
-            raw_obj = json.loads(json_match.group())
+        raw_obj = json.loads(json_match.group())
 
-            if not isinstance(raw_obj, dict):
-                logger.warning("LLM JSON is not an object; using fallback.")
-                return self._get_fallback_analysis(request)
+        if not isinstance(raw_obj, dict):
+            logger.error("LLM JSON is not an object")
+            raise ValueError("LLM JSON is not an object")
 
-            # Best-effort normalization for sentiment casing if present
-            sentiment = raw_obj.get("sentiment")
-            if isinstance(sentiment, str):
-                norm = sentiment.strip().lower()
-                if norm in {"positive", "pos"}:
-                    raw_obj["sentiment"] = "Positive"
-                elif norm in {"neutral", "neu"}:
-                    raw_obj["sentiment"] = "Neutral"
-                elif norm in {"negative", "neg"}:
-                    raw_obj["sentiment"] = "Negative"
+        # Best-effort normalization for sentiment casing if present
+        sentiment = raw_obj.get("sentiment")
+        if isinstance(sentiment, str):
+            norm = sentiment.strip().lower()
+            if norm in {"positive", "pos"}:
+                raw_obj["sentiment"] = "Positive"
+            elif norm in {"neutral", "neu"}:
+                raw_obj["sentiment"] = "Neutral"
+            elif norm in {"negative", "neg"}:
+                raw_obj["sentiment"] = "Negative"
 
-            # Validate strictly with Pydantic
-            validated = LLMAnalysis.model_validate(raw_obj)
-            return validated.model_dump()
+        # Validate strictly with Pydantic
+        validated = LLMAnalysis.model_validate(raw_obj)
+        return validated.model_dump()
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM JSON: {e}; using fallback.")
-            return self._get_fallback_analysis(request)
-        except Exception as e:
-            logger.warning(f"LLM output validation failed: {e}; using fallback.")
-            return self._get_fallback_analysis(request)
 
-    def _get_fallback_analysis(self, request: SentimentRequest) -> dict:
-        """Provide fallback analysis when LLM fails."""
-        return {
-            "analysis": f"You have made progress in learning about {request.what_learned}",
-            "recommendation": "Practice consistently and break down complex concepts into smaller parts",
-            "next_steps": "Review the content again, practice with examples, and seek clarification on challenging parts",
-            "score": 7,
-            "sentiment": "Neutral",
-            "advanced": {
-                "primary_emotion": "Neutral",
-                "confidence_score": 0.5,
-                "struggle_point": "Unable to analyze yet",
-                "learning_disposition": "Growth Mindset",
-                "consistency_check": "Match"
-            },
-            "development_plan": {
-                "next_steps": [
-                    "Review the learned content again",
-                    "Practice with additional examples"
-                ]
-            }
-        }
-    
     def _get_blank_input_response(self) -> SentimentResponse:
         """Provide response when both inputs are blank."""
         return SentimentResponse(
