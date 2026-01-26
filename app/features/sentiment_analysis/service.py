@@ -74,7 +74,7 @@ class SentimentService:
         if advanced_data:
             advanced = Advanced(
                 primary_emotion=advanced_data.get("primary_emotion"),
-                confidence_score=float(advanced_data.get("confidence_score", 0.0)),
+                confidence_score=advanced_data.get("confidence_score"),
                 struggle_point=advanced_data.get("struggle_point"),
                 learning_disposition=advanced_data.get("learning_disposition"),
                 consistency_check=advanced_data.get("consistency_check")
@@ -253,14 +253,6 @@ Response:
             ),
             reranked_results=[]
         )
-        
-    def _get_reranker_safe(self):
-        model = RerankerModelStore.get_model()
-        if model is None:
-             logger.warning("Model not ready yet. Force loading (Sync blocking)...")
-             RerankerModelStore.load_model()
-             model = RerankerModelStore.get_model()
-        return model
 
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         """Rerank search results using Jina Reranker API."""
