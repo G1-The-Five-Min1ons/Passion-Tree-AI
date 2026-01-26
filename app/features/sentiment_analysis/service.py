@@ -1,12 +1,9 @@
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 from typing import List, Dict, Any
 import asyncio
 import logging
 import re
 import json
-import os
-from tenacity import retry, stop_after_attempt, wait_fixed
-from groq import AsyncGroq
 from app.features.search.repository import SearchRepository
 from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
@@ -171,32 +168,6 @@ Response:
 """
         return prompt
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-    async def _call_groq_api(self, prompt: str) -> str:
-        """Call Groq API with retry logic."""
-        try:
-            client = AsyncGroq(
-                api_key=os.environ.get("GROQ_API_KEY"),
-            )
-
-            chat_completion = await client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                model="llama-3.3-70b-versatile",
-                temperature=0.4,
-                max_tokens=1500,
-            )
-
-            return chat_completion.choices[0].message.content
-
-        except Exception as e:
-            logger.error(f"Groq API Error: {e}", exc_info=True)
-            return "Error: Unable to generate analysis at this moment."
-
     def _validate_and_clean_analysis(self, text: str, request: SentimentRequest) -> dict:
         """Validate and clean the LLM output against the strict schema.
 
@@ -231,28 +202,6 @@ Response:
         # Validate strictly with Pydantic
         validated = LLMAnalysis.model_validate(raw_obj)
         return validated.model_dump()
-
-
-    def _get_blank_input_response(self) -> SentimentResponse:
-        """Provide response when both inputs are blank."""
-        return SentimentResponse(
-            sentiment="Neutral",
-            reflection_score=0.0,
-            summary="No learning data or feelings provided",
-            advanced=Advanced(
-                primary_emotion="ไม่มีข้อมูล",
-                confidence_score=0.0,
-                struggle_point="ไม่มีข้อมูล",
-                learning_disposition="ไม่มีข้อมูล"
-            ),
-            development_plan=DevelopmentPlan(
-                next_steps=[
-                    "Please provide learning information and feelings for accurate analysis",
-                    "Set clear learning goals"
-                ]
-            ),
-            reranked_results=[]
-        )
 
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         """Rerank search results using Jina Reranker API."""
