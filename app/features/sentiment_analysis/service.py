@@ -11,6 +11,7 @@ from qdrant_client import QdrantClient
 from app.core.llm_client import call_groq_api
 from app.core.reranker_store import get_reranker_service
 from .schema import SentimentRequest, SentimentResponse, LLMAnalysis, Advanced, DevelopmentPlan
+from tenacity import retry, stop_after_attempt, wait_fixed, RetryError
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +53,21 @@ class SentimentService:
         
         prompt = self._build_reflection_prompt(request, context_str)
 
+        # Retry mechanism for both API call and validation
         try:
-            raw_text = await call_groq_api(prompt)
+            final_analysis = await self._call_llm_with_retry(prompt, request)
         except Exception as e:
-            logger.error(f"AI Analysis Failed: {e}")
-            raw_text = ""
-
-        final_analysis = self._validate_and_clean_analysis(raw_text, request)
+            logger.error(f"Failed to get valid analysis after all retries: {e}")
+            # Return minimal valid response instead of crashing
+            return SentimentResponse(
+                sentiment="Neutral",
+                reflection_score=5.0,
+                summary="Unable to analyze reflection at this moment. Please try again later.",
+                advanced=None,
+                development_plan=None,
+                reranked_results=used_examples
+            )
         
-        # Extract all fields from final_analysis (ใช้ค่าจาก LLM โดยตรง ไม่มี default)
         reflection_score = final_analysis.get("score", 0.0)
         sentiment = final_analysis.get("sentiment", "Neutral")
         summary = final_analysis.get("analysis", "")
@@ -167,6 +174,20 @@ Instructions:
 Response:
 """
         return prompt
+
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+    async def _call_llm_with_retry(self, prompt: str, request: SentimentRequest) -> dict:
+        """
+        Call Groq API with retry for both API failures and validation failures.
+        Retries up to 3 times with 2 second delay between attempts.
+        """
+        try:
+            raw_text = await call_groq_api(prompt)
+
+            return self._validate_and_clean_analysis(raw_text, request)
+        except Exception as e:
+            logger.warning(f"LLM call or validation failed, will retry: {e}")
+            raise
 
     def _validate_and_clean_analysis(self, text: str, request: SentimentRequest) -> dict:
         """Validate and clean the LLM output against the strict schema.
