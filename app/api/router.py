@@ -75,7 +75,6 @@ api_router.include_router(
     prefix="/sentiment",
     tags=["Sentiment Analysis"]
 )
-
 api_router.include_router(
     generator.router,
     prefix="/generator",
