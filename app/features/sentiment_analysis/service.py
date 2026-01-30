@@ -175,7 +175,8 @@ Response:
 """
         return prompt
 
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+    @retry(stop=stop_after_attempt(3), 
+           wait=wait_fixed(2))
     async def _call_llm_with_retry(self, prompt: str, request: SentimentRequest) -> dict:
         """
         Call Groq API with retry for both API failures and validation failures.
