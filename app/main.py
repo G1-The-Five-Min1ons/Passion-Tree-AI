@@ -1,22 +1,14 @@
+import os, time
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.core.embedding import EmbeddingService
 from app.core.reranker_store import get_reranker_service
-import logging
+from app.core.logger import setup_logger
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-
-# Suppress verbose HTTP logs from external libraries
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-
-logger = logging.getLogger(__name__)
+# Setup Environment and Logger
+is_dev = os.getenv("APP_ENV") != "production"
+ai_logger = setup_logger(is_dev)
 
 app = FastAPI(
     title="AI Inference Service",
@@ -24,22 +16,62 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Add Middleware to Log Every Request Like Fiber
+@app.middleware("http")
+async def logging_middleware(request: Request, call_next):
+    start_time = time.time()
+    
+    # Extract basic info
+    path = request.url.path
+    method = request.method
+
+    response = await call_next(request)
+    
+    process_time = (time.time() - start_time) * 1000
+    
+    # Log output as JSON (Prod) or Text (Dev) automatically
+    ai_logger.info(
+        "request handled",
+        extra={
+            "method": method,
+            "path": path,
+            "status_code": response.status_code,
+            "latency_ms": f"{process_time:.2f}ms",
+            "ip": request.client.host
+        }
+    )
+    return response
+
 @app.on_event("startup")
 async def startup_event():
     try:
-        logger.info("Starting AI Service - Preloading embedding model...")
-        # Initialize EmbeddingService to trigger model download/cache
+        ai_logger.info("Starting AI Service - Preloading models...")
+        
+        # Initialize EmbeddingService
         _ = EmbeddingService()
-        logger.info("Embedding model loaded successfully - Server ready!")
+        ai_logger.info("Embedding model loaded successfully")
+        
         # Preload Reranker API model
         _ = get_reranker_service()
-        logger.info("Reranker API model loaded successfully - Server ready!")
+        ai_logger.info("Reranker API model loaded successfully", extra={"status": "ready"})
+        
     except Exception as e:
-        logger.error(f"Failed to preload embedding model: {e}")
-        raise
+        ai_logger.error("Failed to preload models", extra={"error": str(e)})
+        os._exit(1)
 
+# Adjust Exception Handler to Log Structured Data
 @app.exception_handler(HTTPException)
 async def custom_http_exception_handler(request: Request, exc: HTTPException):
+    # Log error details to Azure Monitor before sending response
+    ai_logger.warning(
+        "application handled error",
+        extra={
+            "status_code": exc.status_code,
+            "message": exc.detail,
+            "path": request.url.path
+        }
+    )
+    
     return JSONResponse(
         status_code=exc.status_code,
         content={
