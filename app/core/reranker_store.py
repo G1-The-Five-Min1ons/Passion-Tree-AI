@@ -32,8 +32,6 @@ class JinaRerankerService:
         query = pairs[0][0]
         documents = [pair[1] for pair in pairs]
         
-        logger.info(f"Reranker: Processing {len(documents)} documents...")
-        
         payload = {
             "model": self.model,
             "query": query,

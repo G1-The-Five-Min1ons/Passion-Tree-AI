@@ -25,7 +25,6 @@ class EmbeddingService:
         
         # Use cached model if available
         if EmbeddingService._model_cache is None:
-            logger.info(f"Loading FastEmbed model: {model_name} (first time only)")
             # Set threads for ONNX Runtime to use all available CPU cores
             threads = os.cpu_count() or 4
             EmbeddingService._model_cache = TextEmbedding(
@@ -33,12 +32,10 @@ class EmbeddingService:
                 cache_dir=cache_dir,  # Persist model in specified directory
                 threads=threads  # Optimize for multi-threading
             )
-            logger.info(f"FastEmbed initialized with {threads} threads at {cache_dir}")
         
         self.model = EmbeddingService._model_cache
 
     def generate_vector(self, text: str) -> List[float]:
-        """Generate embeddings using FastEmbed with parallel processing."""
         try:
             # Use parallel parameter for better concurrent request handling
             # parallel=None uses optimal batch processing automatically
@@ -48,7 +45,6 @@ class EmbeddingService:
                 parallel=None       # Auto-optimize parallelism
             ))
             vector = embeddings[0].tolist()
-            logger.info(f"Embedding: Generated {len(vector)}-dimensional vector")
             return vector
             
         except Exception as e:
