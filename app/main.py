@@ -3,12 +3,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.core.embedding import EmbeddingService
-from app.core.reranker_store import get_reranker_service
+from app.core.reranker_model import get_reranker_service
 from app.core.logger import setup_logger
+from app.core.config import settings
 
-# Setup Environment and Logger
-is_dev = os.getenv("APP_ENV") != "production"
-ai_logger = setup_logger(is_dev)
+ai_logger = setup_logger(settings.is_dev)
+ai_logger.info("Service started", extra={"env": settings.APP_ENV})
 
 app = FastAPI(
     title="AI Inference Service",

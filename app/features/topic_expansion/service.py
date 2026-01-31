@@ -1,1 +1,0 @@
-# Orchestration: ตรวจสอบ Guardrail -> ยิง Groq -> จัดลำดับ
