@@ -1,0 +1,30 @@
+name: Deploy Passion Tree AI Service
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }} # Use Azure credentials from GitHub Secrets
+
+      - name: Build and Push to ACR
+        run: |
+          az acr login --name ${{ secrets.ACR_NAME }}
+          docker build . -t ${{ secrets.ACR_NAME }}.azurecr.io/passion-tree-ai:${{ github.sha }}
+          docker push ${{ secrets.ACR_NAME }}.azurecr.io/passion-tree-ai:${{ github.sha }} # Push image to ACR
+
+      - name: Deploy to Container App
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          imageToDeploy: ${{ secrets.ACR_NAME }}.azurecr.io/passion-tree-ai:${{ github.sha }}
+          resourceGroup: ${{ secrets.RESOURCE_GROUP }}
+          containerAppName: passion-tree-ai-service
