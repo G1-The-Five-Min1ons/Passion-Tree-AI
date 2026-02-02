@@ -28,6 +28,34 @@ class DevStructuredFormatter(logging.Formatter):
         
         return log_line
 
+class SlogStyleFormatter(logging.Formatter):
+    """JSON Formatter สำหรับ Production เหมือน slog ของ Go"""
+    def format(self, record):
+        import json
+        
+        time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"
+        rel_path = os.path.relpath(record.pathname, os.getcwd()) if os.path.isabs(record.pathname) else record.pathname
+        
+        log_entry = {
+            "time": time,
+            "level": record.levelname,
+            "source": f"{rel_path}:{record.lineno}",
+            "msg": record.getMessage(),
+            "service": "passion-tree-ai",
+            "env": "production"
+        }
+        
+        # เพิ่ม extra attributes
+        standard_attrs = ("name", "msg", "args", "levelname", "levelno", "pathname", "filename", 
+                          "module", "exc_info", "exc_text", "stack_info", "lineno", "funcName", 
+                          "created", "msecs", "relativeCreated", "thread", "threadName", "processName", "process")
+        
+        for key, value in record.__dict__.items():
+            if key not in standard_attrs and not key.startswith("_"):
+                log_entry[key] = value
+        
+        return json.dumps(log_entry, ensure_ascii=False)
+
 def setup_logger(is_dev: bool):
     logger = logging.getLogger() # Root Logger
     
