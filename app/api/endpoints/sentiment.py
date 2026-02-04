@@ -14,7 +14,7 @@ async def analyze_sentiment(
     service: SentimentService = Depends()
 ):
     try:
-        logger.info(f"Analyzing reflection for: {request.what_learned}")
+        logger.info(f"Analyzing reflection - Learning: {request.learning_reflect[:50]}... | Mood: {request.mood_reflect[:50]}...")
         result = await service.analyze_reflection(request)
         return result
     except Exception as e:

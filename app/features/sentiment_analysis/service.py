@@ -34,7 +34,7 @@ class SentimentService:
         """
         Analyze user reflection with sentiment analysis and reranking of similar reflections.
         """
-        combined_query = f"{request.what_learned} {request.feelings_after_learning}"
+        combined_query = f"{request.learning_reflect} {request.mood_reflect}"
         logger.info(f"Analyzing reflection for query: {combined_query}")
         query_vector = await asyncio.to_thread(self.embedding.generate_vector, combined_query)
         
@@ -58,51 +58,61 @@ class SentimentService:
             final_analysis = await self._call_llm_with_retry(prompt, request)
         except Exception as e:
             logger.error(f"Failed to get valid analysis after all retries: {e}")
-            # Return minimal valid response instead of crashing
+            # Calculate weighted score even for fallback
+            avg_self_score = (request.feel_score + request.progress_score + request.challenge_score) / 3
+            weighted_score = (5.0 + avg_self_score) / 2
+            
             return SentimentResponse(
-                sentiment="Neutral",
-                reflection_score=5.0,
                 summary="Unable to analyze reflection at this moment. Please try again later.",
-                advanced=None,
-                development_plan=None,
+                sentiment_analysis="Neutral",
+                primary_emotion="Unknown",
+                struggle_point="Unable to identify at this moment",
+                development_plan=["Please try submitting your reflection again for detailed analysis."],
+                ai_confident_score=0.5,
+                reflection_score=5.0,
+                weighted_reflection_score=round(weighted_score, 2),
                 reranked_results=used_examples
             )
         
-        reflection_score = final_analysis.get("score", 0.0)
+        # Extract fields from LLM response
+        reflection_score = final_analysis.get("score", 5.0)
         sentiment = final_analysis.get("sentiment", "Neutral")
         summary = final_analysis.get("analysis", "")
+        ai_confident_score = final_analysis.get("ai_confident_score", 0.5)
         
-        # Extract advanced metrics from LLM response
-        advanced = None
+        # Extract advanced metrics
         advanced_data = final_analysis.get("advanced", {})
-        if advanced_data:
-            advanced = Advanced(
-                primary_emotion=advanced_data.get("primary_emotion"),
-                confidence_score=advanced_data.get("confidence_score"),
-                struggle_point=advanced_data.get("struggle_point"),
-                learning_disposition=advanced_data.get("learning_disposition"),
-                consistency_check=advanced_data.get("consistency_check")
-            )
+        primary_emotion = advanced_data.get("primary_emotion", "Neutral") if advanced_data else "Neutral"
+        struggle_point = advanced_data.get("struggle_point", "") if advanced_data else ""
         
-        # Extract development plan from LLM response
-        development_plan = None
+        # Extract development plan
         dev_plan_data = final_analysis.get("development_plan", {})
         if dev_plan_data and "next_steps" in dev_plan_data:
-            development_plan = DevelopmentPlan(next_steps=dev_plan_data["next_steps"])
+            development_plan = dev_plan_data["next_steps"]
+        else:
+            next_steps_str = final_analysis.get("next_steps", "")
+            development_plan = [next_steps_str] if next_steps_str else []
+        
+        avg_self_score = (request.feel_score + request.progress_score + request.challenge_score) / 3
+        normalized_self_score = avg_self_score * 2  #ปรับให้มันใช้กับ reflection_score ได้
+        weighted_reflection_score = (reflection_score + normalized_self_score) / 2
 
         return SentimentResponse(
-            sentiment=sentiment,
-            reflection_score=reflection_score,
             summary=summary,
-            advanced=advanced,
+            sentiment_analysis=sentiment,
+            primary_emotion=primary_emotion,
+            struggle_point=struggle_point,
             development_plan=development_plan,
+            ai_confident_score=round(ai_confident_score, 2),
+            reflection_score=round(reflection_score, 1),
+            weighted_reflection_score=round(weighted_reflection_score, 2),
             reranked_results=used_examples
         )
 
     def _build_few_shot_examples(self, results: list) -> str:
         """
         Build few-shot examples from Qdrant results.
-        Extracts learning_reflect, feeling_reflect, score, and sentiment from payload.
+        Extracts summary, sentiment, primary_emotion, struggle_point, and score from payload.
         """
         if not results:
             return ""
@@ -110,23 +120,33 @@ class SentimentService:
         context_str = ""
         for i, res in enumerate(results):
             payload = res.payload
-            learning_reflect = payload.get("learning_reflect", "")
-            feeling_reflect = payload.get("feeling_reflect", "")
-            score = payload.get("score", 5)
+            summary = payload.get("summary", "")
             sentiment = payload.get("sentiment", "Neutral")
+            primary_emotion = payload.get("primary_emotion", "")
+            struggle_point = payload.get("struggle_point", "")
+            development_plan = payload.get("development_plan", "")
+            score = payload.get("reflection_score", 5)
 
-            context_str += f"[Example {i+1}]\nUser Input:\n- Learning Reflect: {learning_reflect}\n- Feeling Reflect: {feeling_reflect}\nExpected Output:\n- Score: {score}\n- Sentiment: {sentiment}\n\n"
+            context_str += f"""[Example {i+1}]
+Summary: {summary}
+Sentiment: {sentiment}
+Primary Emotion: {primary_emotion}
+Struggle Point: {struggle_point}
+Development Plan: {development_plan}
+Reflection Score: {score}
+
+"""
 
         return context_str
 
     def _extract_used_examples(self, results: list) -> List[str]:
-        """Extract learning_reflect texts from results for response."""
+        """Extract summaries from results for response."""
         used_examples = []
         for res in results:
             payload = res.payload
-            learning_reflect = payload.get("learning_reflect", "")
-            if learning_reflect:
-                used_examples.append(learning_reflect)
+            summary = payload.get("summary", "")
+            if summary:
+                used_examples.append(summary[:200])  # Limit to 200 chars for brevity
         return used_examples
 
     def _build_reflection_prompt(self, request: SentimentRequest, context_str: str) -> str:
@@ -134,40 +154,64 @@ class SentimentService:
         
         prompt = f"""
 You are an expert in learning reflection analysis and tracking learning progress.
-Your task is to analyze user's learning reflections and provide insights.
+Your task is to analyze user's learning reflections and provide comprehensive insights.
 
 **Important: Users can input data in Thai or English, but you must respond in Thai only.**
 
-Use the following examples (structure matches reflection.json: learning_reflect, feeling_reflect, score 1-10, sentiment) to understand the required analysis pattern:
+Use the following examples to understand the required analysis pattern:
 --------------------------------------------------
 {context_str}
 --------------------------------------------------
 
 User's reflection data (may be in Thai or English):
-- What was learned: {request.what_learned}
-- Feelings after learning: {request.feelings_after_learning}
+- Learning reflection: {request.learning_reflect}
+- Mood reflection: {request.mood_reflect}
+- Self-assessed feel score: {request.feel_score}/5
+- Self-assessed progress score: {request.progress_score}/5
+- Self-assessed challenge score: {request.challenge_score}/5
 
 Instructions:
-1. Analyze the user's learning experience holistically, regardless of language used
-2. Predict sentiment label (Positive, Neutral, Negative) that aligns with the feeling text
-3. Assign a reflection score from 1-10 where 1-3 = negative struggle, 4-6 = mixed/neutral, 7-8 = positive, 9-10 = very positive and confident
-4. Identify key strengths and areas for improvement
-5. Generate actionable recommendations for continued learning
-6. **Respond with a single JSON object only, and respond entirely in Thai regardless of the language users use for input** with the following structure:
+1. Analyze the user's learning experience holistically, considering both text and numeric self-assessments
+2. Predict sentiment label (Positive, Neutral, Negative) that aligns with the overall reflection
+3. Assign a reflection score from 0-10 based on text quality and depth of reflection:
+   - 0-3 = superficial or negative reflection with limited insight
+   - 4-6 = moderate reflection with some self-awareness
+   - 7-8 = good reflection showing clear understanding
+   - 9-10 = exceptional reflection with deep metacognition
+4. Assess your AI confidence score (0-1) in the analysis based on:
+   - Clarity and completeness of the user's reflection text
+   - Consistency between mood_reflect and numeric scores
+   - Sufficient information to make accurate assessment
+   - Low confidence (0.3-0.5): vague, incomplete, or inconsistent reflection
+   - Medium confidence (0.5-0.7): adequate but some gaps
+   - High confidence (0.7-1.0): clear, detailed, consistent reflection
+5. Identify the primary emotion and main struggle point
+6. Generate a detailed, actionable development plan with specific, in-depth steps
+   - Each step should be comprehensive and detailed (2-4 sentences per step)
+   - Include specific tools, techniques, or resources
+   - Provide concrete examples and actionable advice
+   - Focus on practical implementation details
+7. **Respond with a single JSON object only, and respond entirely in Thai regardless of input language** with this exact structure:
 {{
-  "analysis": "Detailed analysis of the learning reflection (in Thai)",
-  "recommendation": "Recommendations for improving learning (in Thai)",
-  "next_steps": "Suggested next steps for the learner (in Thai)",
-  "score": <number between 1-10>,
+  "analysis": "Detailed summary analyzing the student's reflection, combining what they learned and how they feel (in Thai, 2-3 sentences)",
+  "recommendation": "Brief recommendations for improving learning (in Thai)",
+  "next_steps": "Overview of suggested next steps (in Thai)",
+  "score": <number between 0-10>,
   "sentiment": "Positive|Neutral|Negative",
+  "ai_confident_score": <number between 0-1, your confidence in this analysis>,
   "advanced": {{
-    "primary_emotion": "Primary detected emotion in Thai, e.g., Confident, Anxious, Frustrated, Hopeful, Neutral",
+    "primary_emotion": "Primary detected emotion in Thai, e.g., Confident, Anxious, Frustrated, Hopeful, Curious, Overwhelmed, Determined",
     "confidence_score": <number between 0-1, calculated from score/10>,
-    "struggle_point": "Main struggle point or challenge (in Thai)",
+    "struggle_point": "Main struggle point or challenge identified from the reflection (in Thai)",
     "learning_disposition": "Growth Mindset"
   }},
   "development_plan": {{
-    "next_steps": ["Step 1 (in Thai)", "Step 2 (in Thai)", "Step 3 (in Thai)", "Step 4 (in Thai)"]
+    "next_steps": [
+      "Step 1: [2-4 sentences with in-depth details, including specific tools, techniques, and clear examples]",
+      "Step 2: [2-4 sentences with in-depth details, including workflow steps and specific best practices]",
+      "Step 3: [2-4 sentences with in-depth details, including resources and practical methods that can be implemented]",
+      "Step 4: [2-4 sentences with in-depth details, including practice approaches and progress tracking methods]"
+    ]
   }}
 }}
 
@@ -231,7 +275,7 @@ Response:
             return []
 
         pairs = [
-            [query, f"{hit.payload.get('learning_reflect', '')} {hit.payload.get('feeling_reflect', '')}"]
+            [query, f"{hit.payload.get('summary', '')} {hit.payload.get('struggle_point', '')}"]
             for hit in results
         ]
 
