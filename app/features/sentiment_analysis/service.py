@@ -37,65 +37,67 @@ class SentimentService:
         combined_query = f"{request.learning_reflect} {request.mood_reflect}"
         logger.info(f"Analyzing reflection for query: {combined_query}")
         query_vector = await asyncio.to_thread(self.embedding.generate_vector, combined_query)
-        
+
         initial_results = await asyncio.to_thread(
             self.search_repo.search,
             collection_name=self.collection_name,
             query_vector=query_vector,
             top_k=20
         )
-        
+
         reranked_results = await asyncio.to_thread(self._rerank_results, combined_query, initial_results, 5)
-        
+
         # Build few-shot examples from Qdrant with proper structure
         context_str = self._build_few_shot_examples(reranked_results)
-        used_examples = self._extract_used_examples(reranked_results)
-        
-        prompt = self._build_reflection_prompt(request, context_str)
 
-        # Retry mechanism for both API call and validation
-        try:
-            final_analysis = await self._call_llm_with_retry(prompt, request)
-        except Exception as e:
-            logger.error(f"Failed to get valid analysis after all retries: {e}")
-            # Calculate weighted score even for fallback
-            avg_self_score = (request.feel_score + request.progress_score + request.challenge_score) / 3
-            normalized_self_score = avg_self_score * 2  # Scale from 0-5 to 0-10
-            weighted_score = 5.0 * 0.65 + normalized_self_score * 0.35
-            
+        # Retry mechanism with feedback loop
+        max_attempts = 3
+        last_error = None
+        
+        for attempt in range(max_attempts):
+            try:
+                prompt = self._build_reflection_prompt(request, context_str, previous_error=last_error)
+                raw_text = await call_groq_api(prompt)
+                final_analysis = self._validate_and_clean_analysis(raw_text, request)
+                break  # Success - exit retry loop
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Attempt {attempt + 1}/{max_attempts} failed: {e}")
+                if attempt == max_attempts - 1:
+                    # All retries exhausted
+                    raise
+                # Continue to next attempt with error feedback
+                await asyncio.sleep(2)
+        else:
+            # This shouldn't happen but just in case
+            logger.error(f"Failed to get valid analysis after all retries")
+
             return SentimentResponse(
                 summary="Unable to analyze reflection at this moment. Please try again later.",
                 sentiment_analysis="Neutral",
-                primary_emotion="Unknown",
                 struggle_point="Unable to identify at this moment",
                 development_plan=["Please try submitting your reflection again for detailed analysis."],
-                ai_confident_score=0.5,
-                reflection_score=5.0,
-                weighted_reflection_score=round(weighted_score, 2),
-                reranked_results=used_examples
+                ai_confident_score=0.0,
+                reflection_score=0.0,
+                weighted_reflection_score=0.0
             )
         
-        # Extract fields from LLM response
-        reflection_score = final_analysis.get("score", 5.0)
-        sentiment = final_analysis.get("sentiment", "Neutral")
-        summary = final_analysis.get("analysis", "")
-        ai_confident_score = final_analysis.get("ai_confident_score", 0.5)
+        # Extract fields from LLM response (validated by Pydantic)
+        reflection_score = final_analysis["score"]
+        sentiment = final_analysis["sentiment"]
+        summary = final_analysis["analysis"]
+        ai_confident_score = final_analysis["ai_confident_score"]
         
         # Extract advanced metrics
-        advanced_data = final_analysis.get("advanced", {})
-        primary_emotion = advanced_data.get("primary_emotion", "Neutral") if advanced_data else "Neutral"
-        struggle_point = advanced_data.get("struggle_point", "") if advanced_data else ""
+        advanced_data = final_analysis["advanced"]
+        primary_emotion = advanced_data.get("primary_emotion")
+        struggle_point = advanced_data["struggle_point"]
         
         # Extract development plan
-        dev_plan_data = final_analysis.get("development_plan", {})
-        if dev_plan_data and "next_steps" in dev_plan_data:
-            development_plan = dev_plan_data["next_steps"]
-        else:
-            next_steps_str = final_analysis.get("next_steps", "")
-            development_plan = [next_steps_str] if next_steps_str else []
+        development_plan = final_analysis["development_plan"]["next_steps"]
         
-        avg_self_score = (request.feel_score + request.progress_score + request.challenge_score) / 3
-        normalized_self_score = avg_self_score * 2  
+        # Calculate weighted reflection score
+        normalized_self_score = self._calculate_weighted_self_score(request)
         weighted_reflection_score = reflection_score * 0.65 + normalized_self_score * 0.35
 
         return SentimentResponse(
@@ -106,8 +108,7 @@ class SentimentService:
             development_plan=development_plan,
             ai_confident_score=round(ai_confident_score, 2),
             reflection_score=round(reflection_score, 1),
-            weighted_reflection_score=round(weighted_reflection_score, 2),
-            reranked_results=used_examples
+            weighted_reflection_score=round(weighted_reflection_score, 2)
         )
 
     def _build_few_shot_examples(self, results: list) -> str:
@@ -140,18 +141,31 @@ Reflection Score: {score}
 
         return context_str
 
-    def _extract_used_examples(self, results: list) -> List[str]:
-        """Extract summaries from results for response."""
-        used_examples = []
-        for res in results:
-            payload = res.payload
-            summary = payload.get("summary", "")
-            if summary:
-                used_examples.append(summary[:200])  # Limit to 200 chars for brevity
-        return used_examples
+    def _calculate_weighted_self_score(self, request: SentimentRequest) -> float:
+        """Calculate weighted self-score: progress 50%, feel 35%, challenge 15%"""
+        avg_self_score = (request.progress_score * 0.5 +
+                        request.feel_score * 0.35 +
+                        request.challenge_score * 0.15)
+        return avg_self_score * 2  # Scale from 0-5 to 0-10
 
-    def _build_reflection_prompt(self, request: SentimentRequest, context_str: str) -> str:
+    def _build_reflection_prompt(self, request: SentimentRequest, context_str: str, previous_error: str = None) -> str:
         """Build the base prompt with few-shot examples for reflection analysis in Thai."""
+        
+        # Add error feedback section if there was a previous error
+        error_feedback = ""
+        if previous_error:
+            error_feedback = f"""
+**IMPORTANT - PREVIOUS ATTEMPT FAILED:**
+Your previous response had the following error: {previous_error}
+
+Please fix this error and ensure your response follows the exact JSON structure specified below.
+Common issues to avoid:
+- Missing required fields
+- Incorrect field types (e.g., string instead of number)
+- Invalid sentiment values (must be exactly: "Positive", "Neutral", or "Negative")
+- Malformed JSON syntax
+
+"""
         
         prompt = f"""
 You are an expert in learning reflection analysis and tracking learning progress.
@@ -159,7 +173,7 @@ Your task is to analyze user's learning reflections and provide comprehensive in
 
 **Important: Users can input data in Thai or English, but you must respond in Thai only.**
 
-Use the following examples to understand the required analysis pattern:
+{error_feedback}Use the following examples to understand the required analysis pattern:
 --------------------------------------------------
 {context_str}
 --------------------------------------------------
@@ -220,20 +234,6 @@ Response:
 """
         return prompt
 
-    @retry(stop=stop_after_attempt(3), 
-           wait=wait_fixed(2))
-    async def _call_llm_with_retry(self, prompt: str, request: SentimentRequest) -> dict:
-        """
-        Call Groq API with retry for both API failures and validation failures.
-        Retries up to 3 times with 2 second delay between attempts.
-        """
-        try:
-            raw_text = await call_groq_api(prompt)
-
-            return self._validate_and_clean_analysis(raw_text, request)
-        except Exception as e:
-            logger.warning(f"LLM call or validation failed, will retry: {e}")
-            raise
 
     def _validate_and_clean_analysis(self, text: str, request: SentimentRequest) -> dict:
         """Validate and clean the LLM output against the strict schema.
@@ -242,18 +242,22 @@ Response:
         - Parse it
         - Validate shape and values using Pydantic
         - Normalize minor casing issues for sentiment
-        - If parsing fails, raise exception to trigger retry
+        - If parsing fails, raise exception with clear error message for feedback
         """
         json_match = re.search(r'\{.*\}', text or "", re.DOTALL)
         if not json_match:
             logger.error("No JSON found in LLM response")
-            raise ValueError("No JSON found in LLM response")
+            raise ValueError("No JSON object found in response. Please provide a valid JSON object.")
 
-        raw_obj = json.loads(json_match.group())
+        try:
+            raw_obj = json.loads(json_match.group())
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {e}")
+            raise ValueError(f"Invalid JSON syntax: {str(e)}. Please check your JSON formatting.")
 
         if not isinstance(raw_obj, dict):
             logger.error("LLM JSON is not an object")
-            raise ValueError("LLM JSON is not an object")
+            raise ValueError("Response must be a JSON object (dictionary), not an array or primitive.")
 
         # Best-effort normalization for sentiment casing if present
         sentiment = raw_obj.get("sentiment")
@@ -267,8 +271,12 @@ Response:
                 raw_obj["sentiment"] = "Negative"
 
         # Validate strictly with Pydantic
-        validated = LLMAnalysis.model_validate(raw_obj)
-        return validated.model_dump()
+        try:
+            validated = LLMAnalysis.model_validate(raw_obj)
+            return validated.model_dump()
+        except Exception as e:
+            logger.error(f"Pydantic validation error: {e}")
+            raise ValueError(f"Schema validation failed: {str(e)}. Please ensure all required fields are present with correct types.")
 
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         """Rerank search results using Jina Reranker API."""
