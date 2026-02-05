@@ -60,7 +60,8 @@ class SentimentService:
             logger.error(f"Failed to get valid analysis after all retries: {e}")
             # Calculate weighted score even for fallback
             avg_self_score = (request.feel_score + request.progress_score + request.challenge_score) / 3
-            weighted_score = (5.0 + avg_self_score) / 2
+            normalized_self_score = avg_self_score * 2  # Scale from 0-5 to 0-10
+            weighted_score = 5.0 * 0.65 + normalized_self_score * 0.35
             
             return SentimentResponse(
                 summary="Unable to analyze reflection at this moment. Please try again later.",
@@ -94,8 +95,8 @@ class SentimentService:
             development_plan = [next_steps_str] if next_steps_str else []
         
         avg_self_score = (request.feel_score + request.progress_score + request.challenge_score) / 3
-        normalized_self_score = avg_self_score * 2  #ปรับให้มันใช้กับ reflection_score ได้
-        weighted_reflection_score = (reflection_score + normalized_self_score) / 2
+        normalized_self_score = avg_self_score * 2  
+        weighted_reflection_score = reflection_score * 0.65 + normalized_self_score * 0.35
 
         return SentimentResponse(
             summary=summary,
