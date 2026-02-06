@@ -64,9 +64,7 @@ class SentimentService:
                 last_error = str(e)
                 logger.warning(f"Attempt {attempt + 1}/{max_attempts} failed: {e}")
                 if attempt == max_attempts - 1:
-                    # All retries exhausted
-                    raise
-                # Continue to next attempt with error feedback
+                    logger.error("All retries exhausted. Returning fallback response.")
                 await asyncio.sleep(2)
         else:
             # This shouldn't happen but just in case
