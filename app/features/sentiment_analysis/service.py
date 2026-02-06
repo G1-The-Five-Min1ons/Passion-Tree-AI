@@ -114,7 +114,9 @@ class SentimentService:
     def _build_few_shot_examples(self, results: list) -> str:
         """
         Build few-shot examples from Qdrant results.
-        Extracts summary, sentiment, primary_emotion, struggle_point, and score from payload.
+        Extracts both input (learning_reflect, mood_reflect, scores) and output 
+        (summary, sentiment, primary_emotion, struggle_point, development_plan, reflection_score) 
+        from nested payload structure.
         """
         if not results:
             return ""
@@ -122,20 +124,39 @@ class SentimentService:
         context_str = ""
         for i, res in enumerate(results):
             payload = res.payload
-            summary = payload.get("summary", "")
-            sentiment = payload.get("sentiment", "Neutral")
-            primary_emotion = payload.get("primary_emotion", "")
-            struggle_point = payload.get("struggle_point", "")
-            development_plan = payload.get("development_plan", "")
-            score = payload.get("reflection_score", 5)
+            
+            # Extract input data
+            input_data = payload.get("input")
+            learning_reflect = input_data.get("learning_reflect")
+            mood_reflect = input_data.get("mood_reflect")
+            feel_score = input_data.get("feel_score")
+            progress_score = input_data.get("progress_score")
+            challenge_score = input_data.get("challenge_score")
+            
+            # Extract output data
+            output_data = payload.get("output")
+            summary = output_data.get("summary")
+            sentiment = output_data.get("sentiment_analysis")
+            primary_emotion = output_data.get("primary_emotion")
+            struggle_point = output_data.get("struggle_point")
+            development_plan = output_data.get("development_plan")
+            score = output_data.get("reflection_score")
 
             context_str += f"""[Example {i+1}]
-Summary: {summary}
-Sentiment: {sentiment}
-Primary Emotion: {primary_emotion}
-Struggle Point: {struggle_point}
-Development Plan: {development_plan}
-Reflection Score: {score}
+INPUT:
+- Learning Reflection: {learning_reflect}
+- Mood Reflection: {mood_reflect}
+- Feel Score: {feel_score}/5
+- Progress Score: {progress_score}/5
+- Challenge Score: {challenge_score}/5
+
+OUTPUT:
+- Summary: {summary}
+- Sentiment: {sentiment}
+- Primary Emotion: {primary_emotion}
+- Struggle Point: {struggle_point}
+- Development Plan: {development_plan}
+- Reflection Score: {score}
 
 """
 
@@ -221,7 +242,7 @@ Instructions:
     "learning_disposition": "Growth Mindset"
   }},
   "development_plan": {{
-    "next_steps": [
+    "next_steps ("the word "Step 1 ,2,3, 4" is in english")": [
       "Step 1: [2-4 sentences with in-depth details, including specific tools, techniques, and clear examples]",
       "Step 2: [2-4 sentences with in-depth details, including workflow steps and specific best practices]",
       "Step 3: [2-4 sentences with in-depth details, including resources and practical methods that can be implemented]",
@@ -241,7 +262,7 @@ Response:
         - Extract JSON object from the text
         - Parse it
         - Validate shape and values using Pydantic
-        - Normalize minor casing issues for sentiment
+        - Normalize minor casing issues for sentiment_
         - If parsing fails, raise exception with clear error message for feedback
         """
         json_match = re.search(r'\{.*\}', text or "", re.DOTALL)
