@@ -10,13 +10,14 @@ permissions:
 
 env:
   ACR_NAME: passiontreecontainerregistry
-  IMAGE_NAME: ai-app
-  CONTAINER_APP_NAME: ai-fastapi
+  IMAGE_NAME: passion-tree-ai
   RESOURCE_GROUP: Passion-Tree
+  CONTAINER_APP_NAME: passion-tree-ai-service
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    # ลบบรรทัด environment: passion-tree-go ออกแล้ว
     
     steps:
       - name: Checkout Code
@@ -31,20 +32,19 @@ jobs:
 
       - name: Build and Push to ACR
         run: |
-          ACR_SERVER="passiontreecontainerregistry.azurecr.io"
-          IMAGE_NAME="passion-tree-ai"
+          ACR_SERVER="${{ env.ACR_NAME }}.azurecr.io"
           TAG="${{ github.sha }}"
           
-          az acr login --name passiontreecontainerregistry
-          docker build . -t $ACR_SERVER/$IMAGE_NAME:$TAG
-          docker push $ACR_SERVER/$IMAGE_NAME:$TAG
+          az acr login --name ${{ env.ACR_NAME }}
+          docker build . -t $ACR_SERVER/${{ env.IMAGE_NAME }}:$TAG
+          docker push $ACR_SERVER/${{ env.IMAGE_NAME }}:$TAG
 
       - name: Deploy to Container App
         uses: azure/container-apps-deploy-action@v1
         with:
-          imageToDeploy: passiontreecontainerregistry.azurecr.io/passion-tree-ai:${{ github.sha }}
-          resourceGroup: Passion-Tree
-          containerAppName: passion-tree-ai-service
+          imageToDeploy: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          resourceGroup: ${{ env.RESOURCE_GROUP }}
+          containerAppName: ${{ env.CONTAINER_APP_NAME }}
           environmentVariables: |
             AI_PORT=${{ secrets.AI_PORT }}
             REDIS_URL=${{ secrets.REDIS_URL }}
