@@ -34,75 +34,87 @@ class SentimentService:
         """
         Analyze user reflection with sentiment analysis and reranking of similar reflections.
         """
-        combined_query = f"{request.what_learned} {request.feelings_after_learning}"
+        combined_query = f"{request.learning_reflect} {request.mood_reflect}"
         logger.info(f"Analyzing reflection for query: {combined_query}")
         query_vector = await asyncio.to_thread(self.embedding.generate_vector, combined_query)
-        
+
         initial_results = await asyncio.to_thread(
             self.search_repo.search,
             collection_name=self.collection_name,
             query_vector=query_vector,
             top_k=20
         )
-        
+
         reranked_results = await asyncio.to_thread(self._rerank_results, combined_query, initial_results, 5)
-        
+
         # Build few-shot examples from Qdrant with proper structure
         context_str = self._build_few_shot_examples(reranked_results)
-        used_examples = self._extract_used_examples(reranked_results)
-        
-        prompt = self._build_reflection_prompt(request, context_str)
 
-        # Retry mechanism for both API call and validation
-        try:
-            final_analysis = await self._call_llm_with_retry(prompt, request)
-        except Exception as e:
-            logger.error(f"Failed to get valid analysis after all retries: {e}")
-            # Return minimal valid response instead of crashing
+        # Retry mechanism with feedback loop
+        max_attempts = 3
+        last_error = None
+        
+        for attempt in range(max_attempts):
+            try:
+                prompt = self._build_reflection_prompt(request, context_str, previous_error=last_error)
+                raw_text = await call_groq_api(prompt)
+                final_analysis = self._validate_and_clean_analysis(raw_text, request)
+                break  # Success - exit retry loop
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Attempt {attempt + 1}/{max_attempts} failed: {e}")
+                if attempt == max_attempts - 1:
+                    logger.error("All retries exhausted. Returning fallback response.")
+                await asyncio.sleep(2)
+        else:
+            # This shouldn't happen but just in case
+            logger.error(f"Failed to get valid analysis after all retries")
+
             return SentimentResponse(
-                sentiment="Neutral",
-                reflection_score=5.0,
                 summary="Unable to analyze reflection at this moment. Please try again later.",
-                advanced=None,
-                development_plan=None,
-                reranked_results=used_examples
+                sentiment_analysis="Neutral",
+                struggle_point="Unable to identify at this moment",
+                development_plan=["Please try submitting your reflection again for detailed analysis."],
+                ai_confident_score=0.0,
+                reflection_score=0.0,
+                weighted_reflection_score=0.0
             )
         
-        reflection_score = final_analysis.get("score", 0.0)
-        sentiment = final_analysis.get("sentiment", "Neutral")
-        summary = final_analysis.get("analysis", "")
+        # Extract fields from LLM response (validated by Pydantic)
+        reflection_score = final_analysis["score"]
+        sentiment = final_analysis["sentiment"]
+        summary = final_analysis["analysis"]
+        ai_confident_score = final_analysis["ai_confident_score"]
         
-        # Extract advanced metrics from LLM response
-        advanced = None
-        advanced_data = final_analysis.get("advanced", {})
-        if advanced_data:
-            advanced = Advanced(
-                primary_emotion=advanced_data.get("primary_emotion"),
-                confidence_score=advanced_data.get("confidence_score"),
-                struggle_point=advanced_data.get("struggle_point"),
-                learning_disposition=advanced_data.get("learning_disposition"),
-                consistency_check=advanced_data.get("consistency_check")
-            )
+        # Extract advanced metrics
+        advanced_data = final_analysis["advanced"]
+        primary_emotion = advanced_data.get("primary_emotion")
+        struggle_point = advanced_data["struggle_point"]
         
-        # Extract development plan from LLM response
-        development_plan = None
-        dev_plan_data = final_analysis.get("development_plan", {})
-        if dev_plan_data and "next_steps" in dev_plan_data:
-            development_plan = DevelopmentPlan(next_steps=dev_plan_data["next_steps"])
+        # Extract development plan
+        development_plan = final_analysis["development_plan"]["next_steps"]
+        
+        # Calculate weighted reflection score
+        normalized_self_score = self._calculate_weighted_self_score(request)
+        weighted_reflection_score = reflection_score * 0.65 + normalized_self_score * 0.35
 
         return SentimentResponse(
-            sentiment=sentiment,
-            reflection_score=reflection_score,
             summary=summary,
-            advanced=advanced,
+            sentiment_analysis=sentiment,
+            primary_emotion=primary_emotion,
+            struggle_point=struggle_point,
             development_plan=development_plan,
-            reranked_results=used_examples
+            ai_confident_score=round(ai_confident_score, 2),
+            reflection_score=round(reflection_score, 1),
+            weighted_reflection_score=round(weighted_reflection_score, 2)
         )
 
     def _build_few_shot_examples(self, results: list) -> str:
         """
         Build few-shot examples from Qdrant results.
-        Extracts learning_reflect, feeling_reflect, score, and sentiment from payload.
+        Extracts both input (learning_reflect, mood_reflect, scores) and output 
+        (summary, sentiment, primary_emotion, struggle_point, development_plan, reflection_score) 
+        from nested payload structure.
         """
         if not results:
             return ""
@@ -110,64 +122,130 @@ class SentimentService:
         context_str = ""
         for i, res in enumerate(results):
             payload = res.payload
-            learning_reflect = payload.get("learning_reflect", "")
-            feeling_reflect = payload.get("feeling_reflect", "")
-            score = payload.get("score", 5)
-            sentiment = payload.get("sentiment", "Neutral")
+            
+            # Extract input data
+            input_data = payload.get("input")
+            learning_reflect = input_data.get("learning_reflect")
+            mood_reflect = input_data.get("mood_reflect")
+            feel_score = input_data.get("feel_score")
+            progress_score = input_data.get("progress_score")
+            challenge_score = input_data.get("challenge_score")
+            
+            # Extract output data
+            output_data = payload.get("output")
+            summary = output_data.get("summary")
+            sentiment = output_data.get("sentiment_analysis")
+            primary_emotion = output_data.get("primary_emotion")
+            struggle_point = output_data.get("struggle_point")
+            development_plan = output_data.get("development_plan")
+            score = output_data.get("reflection_score")
 
-            context_str += f"[Example {i+1}]\nUser Input:\n- Learning Reflect: {learning_reflect}\n- Feeling Reflect: {feeling_reflect}\nExpected Output:\n- Score: {score}\n- Sentiment: {sentiment}\n\n"
+            context_str += f"""[Example {i+1}]
+INPUT:
+- Learning Reflection: {learning_reflect}
+- Mood Reflection: {mood_reflect}
+- Feel Score: {feel_score}/5
+- Progress Score: {progress_score}/5
+- Challenge Score: {challenge_score}/5
+
+OUTPUT:
+- Summary: {summary}
+- Sentiment: {sentiment}
+- Primary Emotion: {primary_emotion}
+- Struggle Point: {struggle_point}
+- Development Plan: {development_plan}
+- Reflection Score: {score}
+
+"""
 
         return context_str
 
-    def _extract_used_examples(self, results: list) -> List[str]:
-        """Extract learning_reflect texts from results for response."""
-        used_examples = []
-        for res in results:
-            payload = res.payload
-            learning_reflect = payload.get("learning_reflect", "")
-            if learning_reflect:
-                used_examples.append(learning_reflect)
-        return used_examples
+    def _calculate_weighted_self_score(self, request: SentimentRequest) -> float:
+        """Calculate weighted self-score: progress 50%, feel 35%, challenge 15%"""
+        avg_self_score = (request.progress_score * 0.5 +
+                        request.feel_score * 0.35 +
+                        request.challenge_score * 0.15)
+        return avg_self_score * 2  # Scale from 0-5 to 0-10
 
-    def _build_reflection_prompt(self, request: SentimentRequest, context_str: str) -> str:
+    def _build_reflection_prompt(self, request: SentimentRequest, context_str: str, previous_error: str = None) -> str:
         """Build the base prompt with few-shot examples for reflection analysis in Thai."""
+        
+        # Add error feedback section if there was a previous error
+        error_feedback = ""
+        if previous_error:
+            error_feedback = f"""
+**IMPORTANT - PREVIOUS ATTEMPT FAILED:**
+Your previous response had the following error: {previous_error}
+
+Please fix this error and ensure your response follows the exact JSON structure specified below.
+Common issues to avoid:
+- Missing required fields
+- Incorrect field types (e.g., string instead of number)
+- Invalid sentiment values (must be exactly: "Positive", "Neutral", or "Negative")
+- Malformed JSON syntax
+
+"""
         
         prompt = f"""
 You are an expert in learning reflection analysis and tracking learning progress.
-Your task is to analyze user's learning reflections and provide insights.
+Your task is to analyze user's learning reflections and provide comprehensive insights.
 
 **Important: Users can input data in Thai or English, but you must respond in Thai only.**
 
-Use the following examples (structure matches reflection.json: learning_reflect, feeling_reflect, score 1-10, sentiment) to understand the required analysis pattern:
+{error_feedback}Use the following examples to understand the required analysis pattern:
 --------------------------------------------------
 {context_str}
 --------------------------------------------------
 
 User's reflection data (may be in Thai or English):
-- What was learned: {request.what_learned}
-- Feelings after learning: {request.feelings_after_learning}
+- Learning reflection: {request.learning_reflect}
+- Mood reflection: {request.mood_reflect}
+- Self-assessed feel score: {request.feel_score}/5
+- Self-assessed progress score: {request.progress_score}/5
+- Self-assessed challenge score: {request.challenge_score}/5
 
 Instructions:
-1. Analyze the user's learning experience holistically, regardless of language used
-2. Predict sentiment label (Positive, Neutral, Negative) that aligns with the feeling text
-3. Assign a reflection score from 1-10 where 1-3 = negative struggle, 4-6 = mixed/neutral, 7-8 = positive, 9-10 = very positive and confident
-4. Identify key strengths and areas for improvement
-5. Generate actionable recommendations for continued learning
-6. **Respond with a single JSON object only, and respond entirely in Thai regardless of the language users use for input** with the following structure:
+1. Analyze the user's learning experience holistically, considering both text and numeric self-assessments
+2. Predict sentiment label (Positive, Neutral, Negative) that aligns with the overall reflection
+3. Assign a reflection score from 0-10 based on text quality and depth of reflection:
+   - 0-3 = superficial or negative reflection with limited insight
+   - 4-6 = moderate reflection with some self-awareness
+   - 7-8 = good reflection showing clear understanding
+   - 9-10 = exceptional reflection with deep metacognition
+4. Assess your AI confidence score (0-1) in the analysis based on:
+   - Clarity and completeness of the user's reflection text
+   - Consistency between mood_reflect and numeric scores
+   - Sufficient information to make accurate assessment
+   - Low confidence (0.3-0.5): vague, incomplete, or inconsistent reflection
+   - Medium confidence (0.5-0.7): adequate but some gaps
+   - High confidence (0.7-1.0): clear, detailed, consistent reflection
+5. Identify the primary emotion and main struggle point
+6. Generate a detailed, actionable development plan with specific, in-depth steps
+   - Each step should be comprehensive and detailed (2-4 sentences per step)
+   - Include specific tools, techniques, or resources
+   - Provide concrete examples and actionable advice
+   - Focus on practical implementation details
+7. **Respond with a single JSON object only, and respond entirely in Thai regardless of input language** with this exact structure:
 {{
-  "analysis": "Detailed analysis of the learning reflection (in Thai)",
-  "recommendation": "Recommendations for improving learning (in Thai)",
-  "next_steps": "Suggested next steps for the learner (in Thai)",
-  "score": <number between 1-10>,
+  "analysis": "Detailed summary analyzing the student's reflection, combining what they learned and how they feel (in Thai, 2-3 sentences)",
+  "recommendation": "Brief recommendations for improving learning (in Thai)",
+  "next_steps": "Overview of suggested next steps (in Thai)",
+  "score": <number between 0-10>,
   "sentiment": "Positive|Neutral|Negative",
+  "ai_confident_score": <number between 0-1, your confidence in this analysis>,
   "advanced": {{
-    "primary_emotion": "Primary detected emotion in Thai, e.g., Confident, Anxious, Frustrated, Hopeful, Neutral",
+    "primary_emotion": "Primary detected emotion in Thai, e.g., Confident, Anxious, Frustrated, Hopeful, Curious, Overwhelmed, Determined",
     "confidence_score": <number between 0-1, calculated from score/10>,
-    "struggle_point": "Main struggle point or challenge (in Thai)",
+    "struggle_point": "Main struggle point or challenge identified from the reflection (in Thai)",
     "learning_disposition": "Growth Mindset"
   }},
   "development_plan": {{
-    "next_steps": ["Step 1 (in Thai)", "Step 2 (in Thai)", "Step 3 (in Thai)", "Step 4 (in Thai)"]
+    "next_steps ("the word "Step 1 ,2,3, 4" is in english")": [
+      "Step 1: [2-4 sentences with in-depth details, including specific tools, techniques, and clear examples]",
+      "Step 2: [2-4 sentences with in-depth details, including workflow steps and specific best practices]",
+      "Step 3: [2-4 sentences with in-depth details, including resources and practical methods that can be implemented]",
+      "Step 4: [2-4 sentences with in-depth details, including practice approaches and progress tracking methods]"
+    ]
   }}
 }}
 
@@ -175,20 +253,6 @@ Response:
 """
         return prompt
 
-    @retry(stop=stop_after_attempt(3), 
-           wait=wait_fixed(2))
-    async def _call_llm_with_retry(self, prompt: str, request: SentimentRequest) -> dict:
-        """
-        Call Groq API with retry for both API failures and validation failures.
-        Retries up to 3 times with 2 second delay between attempts.
-        """
-        try:
-            raw_text = await call_groq_api(prompt)
-
-            return self._validate_and_clean_analysis(raw_text, request)
-        except Exception as e:
-            logger.warning(f"LLM call or validation failed, will retry: {e}")
-            raise
 
     def _validate_and_clean_analysis(self, text: str, request: SentimentRequest) -> dict:
         """Validate and clean the LLM output against the strict schema.
@@ -196,19 +260,23 @@ Response:
         - Extract JSON object from the text
         - Parse it
         - Validate shape and values using Pydantic
-        - Normalize minor casing issues for sentiment
-        - If parsing fails, raise exception to trigger retry
+        - Normalize minor casing issues for sentiment_
+        - If parsing fails, raise exception with clear error message for feedback
         """
         json_match = re.search(r'\{.*\}', text or "", re.DOTALL)
         if not json_match:
             logger.error("No JSON found in LLM response")
-            raise ValueError("No JSON found in LLM response")
+            raise ValueError("No JSON object found in response. Please provide a valid JSON object.")
 
-        raw_obj = json.loads(json_match.group())
+        try:
+            raw_obj = json.loads(json_match.group())
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error: {e}")
+            raise ValueError(f"Invalid JSON syntax: {str(e)}. Please check your JSON formatting.")
 
         if not isinstance(raw_obj, dict):
             logger.error("LLM JSON is not an object")
-            raise ValueError("LLM JSON is not an object")
+            raise ValueError("Response must be a JSON object (dictionary), not an array or primitive.")
 
         # Best-effort normalization for sentiment casing if present
         sentiment = raw_obj.get("sentiment")
@@ -222,8 +290,12 @@ Response:
                 raw_obj["sentiment"] = "Negative"
 
         # Validate strictly with Pydantic
-        validated = LLMAnalysis.model_validate(raw_obj)
-        return validated.model_dump()
+        try:
+            validated = LLMAnalysis.model_validate(raw_obj)
+            return validated.model_dump()
+        except Exception as e:
+            logger.error(f"Pydantic validation error: {e}")
+            raise ValueError(f"Schema validation failed: {str(e)}. Please ensure all required fields are present with correct types.")
 
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         """Rerank search results using Jina Reranker API."""
@@ -231,7 +303,7 @@ Response:
             return []
 
         pairs = [
-            [query, f"{hit.payload.get('learning_reflect', '')} {hit.payload.get('feeling_reflect', '')}"]
+            [query, f"{hit.payload.get('summary', '')} {hit.payload.get('struggle_point', '')}"]
             for hit in results
         ]
 
