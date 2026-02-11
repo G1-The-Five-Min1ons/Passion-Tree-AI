@@ -38,6 +38,17 @@ jobs:
           docker build . -t $ACR_SERVER/${{ env.IMAGE_NAME }}:$TAG
           docker push $ACR_SERVER/${{ env.IMAGE_NAME }}:$TAG
 
+      - name: Set Container App Secrets
+        run: |
+          az containerapp secret set \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --secrets \
+              "azuresql-password=${{ secrets.AZURESQL_PASSWORD }}" \
+              "groq-key=${{ secrets.GROQ_API_KEY }}" \
+              "jina-key=${{ secrets.JINA_API_KEY }}" \
+              "qdrant-key=${{ secrets.QDRANT_API_KEY }}"
+
       - name: Deploy to Container App
         uses: azure/container-apps-deploy-action@v1
         with:
@@ -48,7 +59,8 @@ jobs:
             AI_PORT=${{ secrets.AI_PORT }}
             REDIS_URL=${{ secrets.REDIS_URL }}
             AZURESQL_SERVER=${{ secrets.AZURESQL_SERVER }}
-            AZURESQL_PASSWORD=${{ secrets.AZURESQL_PASSWORD }}
-            GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
-            HF_TOKEN=${{ secrets.HF_TOKEN }}
             QDRANT_URL=${{ secrets.QDRANT_URL }}
+            AZURESQL_PASSWORD=secretref:azuresql-password
+            GROQ_API_KEY=secretref:groq-key
+            JINA_API_KEY=secretref:jina-key
+            QDRANT_API_KEY=secretref:qdrant-key
