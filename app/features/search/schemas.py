@@ -34,7 +34,7 @@ class UpsertRequest(BaseModel):
 
 class SyncLearningPathRequest(BaseModel):
     """Schema for syncing learning path from GO backend to Qdrant"""
-    path_id: int = Field(..., description="Learning path ID from SQL Database")
+    path_id: str = Field(..., description="Learning path ID from SQL Database")
     title: str = Field(..., description="Learning path title")
     description: str = Field(..., description="Learning path description")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata for filtering (e.g. category_id, difficulty, tags)")
@@ -44,7 +44,7 @@ class SyncResponse(BaseModel):
     """Response for sync operations"""
     success: bool
     message: str
-    path_id: Optional[int] = None
+    path_id: Optional[str] = None
 
 class BulkSyncRequest(BaseModel):
     """Schema for bulk syncing multiple learning paths (initial sync)"""

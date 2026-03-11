@@ -71,10 +71,10 @@ class SearchService:
             logger.error(f"Search Error: {e}", exc_info=True)
             return SearchResponse(query=query, total=0, results=[])
 
-    async def sync_upsert(self, collection_name: str, path_id: int, title: str, description: str, metadata: dict):
+    async def sync_upsert(self, collection_name: str, path_id: str, title: str, description: str, metadata: dict):
         # สร้าง Vector จาก Title + Description
         vector = self.embedding.get_path_vector(title, description)
-        
+
         # เก็บเฉพาะ title ใน payload
         payload = {
             "title": title,
