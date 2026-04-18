@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
+
+from app.features.recommendation.schema import BatchRecommendPayload, BatchRecommendResponse
+from app.features.recommendation.service import RecommendationService
 
 logger = logging.getLogger(__name__)
 
@@ -114,3 +117,16 @@ async def recommend_learning_path(request: LearningPathRecommendRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate learning path: {str(e)}"
         )
+
+@router.post("/batch-compute", response_model=BatchRecommendResponse)
+async def compute_batch_recommendations(
+    request: BatchRecommendPayload,
+    service: RecommendationService = Depends()
+):
+    try:
+        logger.info("Received batch computation request")
+        response = await service.compute_batch_recommendations(request)
+        return response
+    except Exception as e:
+        logger.error(f"Endpoint error: {e}")
+        raise
