@@ -1,10 +1,10 @@
 import logging
-import pandas as pd
-from scipy.sparse import csr_matrix
-import implicit
+from collections import defaultdict
+from math import sqrt
 from fastapi import Depends, HTTPException, status
-from typing import List, Dict, Set
+from typing import Dict, List, Optional, Set, Tuple
 
+from app.core.config import settings
 from app.features.search.service import SearchService
 from .schema import (
     BatchRecommendPayload,
@@ -19,140 +19,302 @@ class RecommendationService:
         self.search_service = search_service
         self.source_context = "app.features.recommendation.service"
 
-        self.alpha = 0.6  # (ALS) 60%
-        self.beta = 0.4  # (Content-Based) 40%
+        # Deterministic blend weights for user centroid construction
+        self.min_behavior_weight = settings.REC_MIN_BEHAVIOR_WEIGHT
+        self.max_behavior_weight = settings.REC_MAX_BEHAVIOR_WEIGHT
+        self.full_behavior_density = max(settings.REC_FULL_BEHAVIOR_DENSITY, 1.0)
+        self.default_top_k = 10
+        self.candidate_multiplier = 4
+        self.collection_name = "learning_paths"
 
-    def _normalize_scores(self, raw_scores: Dict[str, float]) -> Dict[str, float]:
-        if not raw_scores:
-            return {}
-
-        vals = list(raw_scores.values())
-        min_v, max_v = min(vals), max(vals)
-
-        if max_v == min_v:
-            return {k: 1.0 for k in raw_scores.keys()}
-
-        return {k: (v - min_v) / (max_v - min_v) for k, v in raw_scores.items()}
-
-    def _get_collaborative_scores(
-        self, model, u_idx: int, user_items: csr_matrix, path_map: dict, top_k: int = 30
-    ) -> Dict[str, float]:
-        path_indices, scores = model.recommend(
-            u_idx, user_items, N=top_k, filter_already_liked_items=True
-        )
-
-        raw_scores = {
-            str(path_map[path_indices[i]]): float(scores[i])
-            for i in range(len(path_indices))
-        }
-        return self._normalize_scores(raw_scores)
-
-    async def _get_content_based_scores(
-        self, interests: str, interacted_paths: Set[str], top_k: int = 30
-    ) -> Dict[str, float]:
-        try:
-            search_resp = await self.search_service.search(
-                query=interests,
-                top_k=top_k + len(interacted_paths),
-                resource_type="learning_paths",
+        if self.min_behavior_weight > self.max_behavior_weight:
+            self.min_behavior_weight, self.max_behavior_weight = (
+                self.max_behavior_weight,
+                self.min_behavior_weight,
             )
 
-            raw_scores = {}
-            for result in search_resp.results:
-                path_id = str(result.id)
-                if path_id not in interacted_paths:
-                    raw_scores[path_id] = float(result.score)
-                    if len(raw_scores) == top_k:
-                        break
+    @staticmethod
+    def _normalize_vector(vector: Optional[List[float]]) -> Optional[List[float]]:
+        if not vector:
+            return None
+        norm = sqrt(sum(v * v for v in vector))
+        if norm == 0:
+            return None
+        return [v / norm for v in vector]
 
-            return self._normalize_scores(raw_scores)
-        except Exception as e:
-            logger.error(f"[{self.source_context}] Content-Based search failed: {e}")
+    @staticmethod
+    def _extract_point_vector(point) -> Optional[List[float]]:
+        vector = getattr(point, "vector", None)
+        if vector is None:
+            return None
+        if isinstance(vector, dict):
+            if not vector:
+                return None
+            vector = next(iter(vector.values()))
+        return list(vector)
+
+    def _fetch_path_vectors(self, path_ids: Set[str]) -> Dict[str, List[float]]:
+        if not path_ids:
             return {}
+
+        try:
+            points = self.search_service.repository.client.retrieve(
+                collection_name=self.collection_name,
+                ids=list(path_ids),
+                with_vectors=True,
+                with_payload=False,
+            )
+        except Exception as exc:
+            logger.error(f"[{self.source_context}] Failed to retrieve vectors: {exc}")
+            return {}
+
+        vectors: Dict[str, List[float]] = {}
+        for point in points:
+            vec = self._extract_point_vector(point)
+            if vec:
+                vectors[str(point.id)] = vec
+        return vectors
+
+    def _build_behavior_centroid(self, interactions) -> Optional[List[float]]:
+        if not interactions:
+            return None
+
+        path_ids = {str(interaction.path_id) for interaction in interactions}
+        path_vectors = self._fetch_path_vectors(path_ids)
+        if not path_vectors:
+            return None
+
+        weighted_sum: Optional[List[float]] = None
+        total_weight = 0.0
+
+        for interaction in interactions:
+            vec = path_vectors.get(str(interaction.path_id))
+            if not vec:
+                continue
+
+            weight = max(float(interaction.score), 0.0)
+            if weight == 0:
+                continue
+
+            if weighted_sum is None:
+                weighted_sum = [0.0] * len(vec)
+
+            if len(weighted_sum) != len(vec):
+                logger.warning(
+                    f"[{self.source_context}] Vector dimension mismatch for path_id={interaction.path_id}"
+                )
+                continue
+
+            for i, value in enumerate(vec):
+                weighted_sum[i] += value * weight
+            total_weight += weight
+
+        if not weighted_sum or total_weight == 0:
+            return None
+
+        centroid = [value / total_weight for value in weighted_sum]
+        return self._normalize_vector(centroid)
+
+    def _build_onboarding_vector(self, interests: str) -> Optional[List[float]]:
+        if not interests or not interests.strip():
+            return None
+
+        try:
+            vector = self.search_service.embedding.generate_vector(interests)
+            return self._normalize_vector(list(vector))
+        except Exception as exc:
+            logger.error(
+                f"[{self.source_context}] Failed to generate onboarding vector: {exc}"
+            )
+            return None
+
+    def _blend_user_centroid(
+        self,
+        behavior_vector: Optional[List[float]],
+        onboarding_vector: Optional[List[float]],
+        interactions_count: int,
+        interactions_score_sum: float,
+    ) -> Optional[List[float]]:
+        behavior_w, onboarding_w = self._calculate_dynamic_weights(
+            interactions_count=interactions_count,
+            interactions_score_sum=interactions_score_sum,
+            has_behavior_vector=behavior_vector is not None,
+            has_onboarding_vector=onboarding_vector is not None,
+        )
+
+        if behavior_vector and onboarding_vector:
+            if len(behavior_vector) != len(onboarding_vector):
+                logger.warning(
+                    f"[{self.source_context}] Cannot blend vectors with different dimensions"
+                )
+                return behavior_vector
+
+            combined = [
+                (behavior_w * behavior_vector[i])
+                + (onboarding_w * onboarding_vector[i])
+                for i in range(len(behavior_vector))
+            ]
+            return self._normalize_vector(combined)
+
+        if behavior_vector:
+            return behavior_vector
+        if onboarding_vector:
+            return onboarding_vector
+        return None
+
+    def _calculate_dynamic_weights(
+        self,
+        interactions_count: int,
+        interactions_score_sum: float,
+        has_behavior_vector: bool,
+        has_onboarding_vector: bool,
+    ) -> Tuple[float, float]:
+        if has_behavior_vector and not has_onboarding_vector:
+            return 1.0, 0.0
+        if has_onboarding_vector and not has_behavior_vector:
+            return 0.0, 1.0
+        if not has_behavior_vector and not has_onboarding_vector:
+            return 0.0, 0.0
+
+        count_density = min(max(interactions_count, 0) / self.full_behavior_density, 1.0)
+        score_density = min(max(interactions_score_sum, 0.0) / self.full_behavior_density, 1.0)
+
+        # Combine amount of behavior and strength of behavior into one density value.
+        density = (count_density + score_density) / 2.0
+
+        # Fewer interactions => rely more on onboarding vector.
+        behavior_dynamic = self.min_behavior_weight + (
+            (self.max_behavior_weight - self.min_behavior_weight) * density
+        )
+
+        behavior_weight = behavior_dynamic
+        onboarding_weight = 1.0 - behavior_weight
+        return behavior_weight, onboarding_weight
+
+    def _get_global_popular_paths(
+        self, interactions, top_k: int
+    ) -> List[str]:
+        if not interactions:
+            return []
+
+        popularity: Dict[str, Dict[str, float]] = defaultdict(
+            lambda: {"score_sum": 0.0, "count": 0.0}
+        )
+
+        for interaction in interactions:
+            path_id = str(interaction.path_id)
+            popularity[path_id]["score_sum"] += max(float(interaction.score), 0.0)
+            popularity[path_id]["count"] += 1.0
+
+        ranked = sorted(
+            popularity.items(),
+            key=lambda item: (
+                item[1]["score_sum"],
+                item[1]["count"],
+                item[0],
+            ),
+            reverse=True,
+        )
+        return [path_id for path_id, _ in ranked[:top_k]]
+
+    @staticmethod
+    def _filter_interacted_paths(candidates: List[str], interacted_paths: Set[str], top_k: int) -> List[str]:
+        filtered: List[str] = []
+        for path_id in candidates:
+            if path_id in interacted_paths:
+                continue
+            filtered.append(path_id)
+            if len(filtered) == top_k:
+                break
+        return filtered
+
+    def _query_candidates(
+        self, user_centroid: List[float], interacted_paths: Set[str], top_k: int
+    ) -> List[str]:
+        try:
+            candidate_limit = max(top_k * self.candidate_multiplier, top_k)
+            search_results = self.search_service.repository.search(
+                collection_name=self.collection_name,
+                query_vector=user_centroid,
+                top_k=candidate_limit + len(interacted_paths),
+                with_payload=False,
+            )
+
+            recommended: List[str] = []
+            for result in search_results:
+                path_id = str(result.id)
+                recommended.append(path_id)
+            return self._filter_interacted_paths(recommended, interacted_paths, top_k)
+        except Exception as exc:
+            logger.error(f"[{self.source_context}] Candidate query failed: {exc}")
+            return []
 
     async def compute_batch_recommendations(
         self, payload: BatchRecommendPayload
     ) -> BatchRecommendResponse:
         logger.info(
-            f"[{self.source_context}] Starting BATCH WEIGHTED HYBRID for {len(payload.users_interactions)} interactions"
+            f"[{self.source_context}] Starting deterministic batch recommendation for {len(payload.users_profiles)} users"
         )
 
         try:
-            user_ids = pd.Index([])
-            model = None
-            sparse_user_item = None
-            path_map = {}
-            df = pd.DataFrame()
+            interactions_by_user = defaultdict(list)
+            for interaction in payload.users_interactions:
+                interactions_by_user[interaction.user_id].append(interaction)
 
-            if payload.users_interactions:
-                df = pd.DataFrame([vars(i) for i in payload.users_interactions])
-
-                user_ids = df["user_id"].astype("category").cat.categories
-                path_ids = df["path_id"].astype("category").cat.categories
-                path_map = {idx: val for idx, val in enumerate(path_ids)}
-
-                df["user_idx"] = df["user_id"].astype("category").cat.codes
-                df["path_idx"] = df["path_id"].astype("category").cat.codes
-
-                sparse_item_user = csr_matrix(
-                    (df["score"].astype(float), (df["path_idx"], df["user_idx"])),
-                    shape=(len(path_ids), len(user_ids)),
-                )
-                sparse_user_item = sparse_item_user.T.tocsr()
-
-                logger.info(f"[{self.source_context}] Training ALS Model...")
-                model = implicit.als.AlternatingLeastSquares(
-                    factors=64, regularization=0.1, iterations=20, random_state=42
-                )
-                model.fit(sparse_item_user)
+            global_popular_paths = self._get_global_popular_paths(
+                payload.users_interactions,
+                top_k=self.default_top_k * self.candidate_multiplier,
+            )
 
             results = []
 
             for profile in payload.users_profiles:
                 original_user_id = profile.user_id
+                interactions = interactions_by_user.get(original_user_id, [])
+                interacted_paths = {str(interaction.path_id) for interaction in interactions}
+                interactions_score_sum = sum(max(float(interaction.score), 0.0) for interaction in interactions)
 
-                cf_scores = {}
-                cb_scores = {}
-                interacted_paths = set()
-
-                if not df.empty and original_user_id in user_ids.values:
-                    interacted_paths = set(
-                        df[df["user_id"] == original_user_id]["path_id"]
-                        .astype(str)
-                        .values
-                    )
-                    u_idx = user_ids.get_loc(original_user_id)
-
-                    cf_scores = self._get_collaborative_scores(
-                        model, u_idx, sparse_user_item[u_idx], path_map
-                    )
-
-                cb_scores = await self._get_content_based_scores(
-                    profile.interests, interacted_paths
+                behavior_vector = self._build_behavior_centroid(interactions)
+                onboarding_vector = self._build_onboarding_vector(profile.interests)
+                user_centroid = self._blend_user_centroid(
+                    behavior_vector=behavior_vector,
+                    onboarding_vector=onboarding_vector,
+                    interactions_count=len(interactions),
+                    interactions_score_sum=interactions_score_sum,
                 )
 
-                final_scores = {}
-                all_candidate_paths = set(cf_scores.keys()).union(set(cb_scores.keys()))
-
-                for path in all_candidate_paths:
-                    score_cf = cf_scores.get(path, 0.0)
-                    score_cb = cb_scores.get(path, 0.0)
-
-                    if not interacted_paths:
-                        final_score = score_cb
+                if user_centroid is None:
+                    if not behavior_vector and not onboarding_vector:
+                        logger.info(
+                            f"[{self.source_context}] Using popular fallback for cold-start user_id={original_user_id}"
+                        )
+                        top_paths = self._filter_interacted_paths(
+                            global_popular_paths,
+                            interacted_paths,
+                            self.default_top_k,
+                        )
                     else:
-                        final_score = (score_cf * self.alpha) + (score_cb * self.beta)
+                        logger.warning(
+                            f"[{self.source_context}] Unable to build centroid for user_id={original_user_id}"
+                        )
+                        top_paths = []
+                else:
+                    top_paths = self._query_candidates(
+                        user_centroid=user_centroid,
+                        interacted_paths=interacted_paths,
+                        top_k=self.default_top_k,
+                    )
 
-                    final_scores[path] = final_score
-
-                sorted_paths = sorted(
-                    final_scores.items(), key=lambda item: item[1], reverse=True
-                )
-                top_10_paths = [path for path, score in sorted_paths[:10]]
+                    if not top_paths:
+                        top_paths = self._filter_interacted_paths(
+                            global_popular_paths,
+                            interacted_paths,
+                            self.default_top_k,
+                        )
 
                 results.append(
                     BatchRecommendationResult(
-                        user_id=original_user_id, recommended_paths=top_10_paths
+                        user_id=original_user_id, recommended_paths=top_paths
                     )
                 )
 
@@ -161,7 +323,7 @@ class RecommendationService:
             )
             return BatchRecommendResponse(
                 success=True,
-                message="Weighted Hybrid batch recommendations generated successfully",
+                message="Deterministic centroid vector recommendations generated successfully",
                 data=results,
             )
 
