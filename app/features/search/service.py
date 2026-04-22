@@ -88,8 +88,26 @@ class SearchService:
             payload=payload
         )
 
-    async def sync_delete(self, collection_name: str, path_id: int):
+    async def sync_delete(self, collection_name: str, path_id: str):
         self.repository.delete_point(collection_name, path_id)
+
+    def list_all_ids(self, collection_name: str) -> List[str]:
+        """Return every point id in a collection (used for reconciliation)."""
+        client = get_qdrant_client()
+        ids: List[str] = []
+        next_page = None
+        while True:
+            points, next_page = client.scroll(
+                collection_name=collection_name,
+                limit=256,
+                offset=next_page,
+                with_payload=False,
+                with_vectors=False,
+            )
+            ids.extend(str(p.id) for p in points)
+            if next_page is None:
+                break
+        return ids
 
     def initialize_collections(self, collection_name: str = "learning_paths", vector_size: int = 384):
         """Initialize required Qdrant collections."""

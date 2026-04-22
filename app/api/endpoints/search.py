@@ -119,7 +119,7 @@ async def bulk_sync_learning_paths(
 
 @router.delete("/sync/{path_id}", response_model=SyncResponse)
 async def delete_learning_path(
-    path_id: int,
+    path_id: str,
     collection_name: str = "learning_paths",
     service: SearchService = Depends()
 ):
@@ -137,6 +137,23 @@ async def delete_learning_path(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Vector database service is temporarily unavailable. Please try again."
+        )
+
+
+@router.get("/ids/{collection_name}")
+async def list_collection_ids(
+    collection_name: str,
+    service: SearchService = Depends()
+):
+    """Return every point id in a collection. Used by the GO backend reconcile flow."""
+    try:
+        ids = service.list_all_ids(collection_name)
+        return {"collection_name": collection_name, "total": len(ids), "ids": ids}
+    except Exception as e:
+        logger.error(f"List IDs error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to list collection ids. Vector database service may be unavailable.",
         )
 
 @router.get("/debug/collection/{collection_name}")
