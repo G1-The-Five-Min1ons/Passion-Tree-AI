@@ -18,9 +18,14 @@ class BatchRecommendPayload(BaseModel):
     users_profiles: List[UserProfile]
 
 
+class RecommendedPathScore(BaseModel):
+    path_id: str
+    score: float
+
+
 class BatchRecommendationResult(BaseModel):
     user_id: str
-    recommended_paths: List[str]
+    recommended_paths: List[RecommendedPathScore]
 
 
 class BatchRecommendResponse(BaseModel):

@@ -10,6 +10,7 @@ from .schema import (
     BatchRecommendPayload,
     BatchRecommendResponse,
     BatchRecommendationResult,
+    RecommendedPathScore,
 )
 
 logger = logging.getLogger(f"passion-tree-ai.{__name__}")
@@ -218,19 +219,21 @@ class RecommendationService:
         return [path_id for path_id, _ in ranked[:top_k]]
 
     @staticmethod
-    def _filter_interacted_paths(candidates: List[str], interacted_paths: Set[str], top_k: int) -> List[str]:
-        filtered: List[str] = []
-        for path_id in candidates:
+    def _filter_interacted_scored(
+        candidates: List[Tuple[str, float]], interacted_paths: Set[str], top_k: int
+    ) -> List[Tuple[str, float]]:
+        filtered: List[Tuple[str, float]] = []
+        for path_id, score in candidates:
             if path_id in interacted_paths:
                 continue
-            filtered.append(path_id)
+            filtered.append((path_id, score))
             if len(filtered) == top_k:
                 break
         return filtered
 
     def _query_candidates(
         self, user_centroid: List[float], interacted_paths: Set[str], top_k: int
-    ) -> List[str]:
+    ) -> List[Tuple[str, float]]:
         try:
             candidate_limit = max(top_k * self.candidate_multiplier, top_k)
             search_results = self.search_service.repository.search(
@@ -240,11 +243,10 @@ class RecommendationService:
                 with_payload=False,
             )
 
-            recommended: List[str] = []
-            for result in search_results:
-                path_id = str(result.id)
-                recommended.append(path_id)
-            return self._filter_interacted_paths(recommended, interacted_paths, top_k)
+            recommended: List[Tuple[str, float]] = [
+                (str(result.id), float(result.score)) for result in search_results
+            ]
+            return self._filter_interacted_scored(recommended, interacted_paths, top_k)
         except Exception as exc:
             logger.error(f"[{self.source_context}] Candidate query failed: {exc}")
             return []
@@ -288,11 +290,12 @@ class RecommendationService:
                         logger.info(
                             f"[{self.source_context}] Using popular fallback for cold-start user_id={original_user_id}"
                         )
-                        top_paths = self._filter_interacted_paths(
+                        fallback_ids = self._filter_interacted_paths(
                             global_popular_paths,
                             interacted_paths,
                             self.default_top_k,
                         )
+                        top_paths = [(pid, 0.0) for pid in fallback_ids]
                     else:
                         logger.warning(
                             f"[{self.source_context}] Unable to build centroid for user_id={original_user_id}"
@@ -306,15 +309,20 @@ class RecommendationService:
                     )
 
                     if not top_paths:
-                        top_paths = self._filter_interacted_paths(
+                        fallback_ids = self._filter_interacted_paths(
                             global_popular_paths,
                             interacted_paths,
                             self.default_top_k,
                         )
+                        top_paths = [(pid, 0.0) for pid in fallback_ids]
 
                 results.append(
                     BatchRecommendationResult(
-                        user_id=original_user_id, recommended_paths=top_paths
+                        user_id=original_user_id,
+                        recommended_paths=[
+                            RecommendedPathScore(path_id=pid, score=score)
+                            for pid, score in top_paths
+                        ],
                     )
                 )
 
