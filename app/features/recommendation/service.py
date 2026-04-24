@@ -231,6 +231,19 @@ class RecommendationService:
                 break
         return filtered
 
+    @staticmethod
+    def _filter_interacted_paths(
+        candidates: List[str], interacted_paths: Set[str], top_k: int
+    ) -> List[str]:
+        filtered: List[str] = []
+        for path_id in candidates:
+            if path_id in interacted_paths:
+                continue
+            filtered.append(path_id)
+            if len(filtered) == top_k:
+                break
+        return filtered
+
     def _query_candidates(
         self, user_centroid: List[float], interacted_paths: Set[str], top_k: int
     ) -> List[Tuple[str, float]]:
