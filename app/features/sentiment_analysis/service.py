@@ -9,7 +9,7 @@ from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
 from app.core.llm_client import call_groq_api
-from app.core.reranker_store import get_reranker_service
+from app.core.reranker_store import get_reranker_service, RerankerUnavailableError
 from .schema import SentimentRequest, SentimentResponse, LLMAnalysis, Advanced, DevelopmentPlan
 
 logger = logging.getLogger(__name__)
@@ -299,7 +299,11 @@ Response:
             raise ValueError(f"Schema validation failed: {str(e)}. Please ensure all required fields are present with correct types.")
 
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
-        """Rerank search results using Jina Reranker API."""
+        """Rerank search results using Jina Reranker API.
+
+        Falls back to the original vector-search order if the reranker is
+        unavailable.
+        """
         if not results:
             return []
 
@@ -308,9 +312,17 @@ Response:
             for hit in results
         ]
 
-        scores = self.reranker.predict(pairs)
+        try:
+            scores = self.reranker.predict(pairs)
+        except RerankerUnavailableError:
+            logger.warning(
+                "Reranker unavailable; falling back to vector-search order for top %d results",
+                top_k,
+            )
+            return results[:top_k]
+
         results_with_scores = list(zip(results, scores))
         results_with_scores.sort(key=lambda x: x[1], reverse=True)
-        final_results = [hit for hit, score in results_with_scores[:top_k]]
+        final_results = [hit for hit, _ in results_with_scores[:top_k]]
 
         return final_results
