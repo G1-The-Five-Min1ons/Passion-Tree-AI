@@ -42,8 +42,9 @@ jobs:
 
       - name: Deploy to Container App
         run: |
-          if ! az containerapp show --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &>/dev/null; then
-            echo "Container App not yet created by Terraform — skipping deploy"
+          APP_STATE=$(az containerapp show --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query properties.provisioningState -o tsv 2>/dev/null)
+          if [ "$APP_STATE" != "Succeeded" ]; then
+            echo "Container App not ready (state: $APP_STATE) — skipping deploy"
             exit 0
           fi
 
