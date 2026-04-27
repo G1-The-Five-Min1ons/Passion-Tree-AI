@@ -42,12 +42,21 @@ jobs:
 
       - name: Deploy to Container App
         run: |
-          APP_STATE=$(az containerapp show --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} --query properties.provisioningState -o tsv 2>/dev/null)
-          if [ "$APP_STATE" != "Succeeded" ]; then
-            echo "Container App not ready (state: $APP_STATE) — skipping deploy"
-            exit 0
+          # 1. เพิ่ม || echo "NotFound" เพื่อให้คำสั่งนี้ทำงานสำเร็จเสมอ (Exit Code 0)
+          APP_STATE=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.provisioningState -o tsv 2>/dev/null || echo "NotFound")
+
+          echo "Current App State: $APP_STATE"
+
+          # 2. เช็คว่าถ้าหาไม่เจอ หรือสถานะไม่ใช่ Succeeded ให้ข้ามไป
+          if [ "$APP_STATE" == "NotFound" ] || [ "$APP_STATE" != "Succeeded" ]; then
+            echo "⚠️ Container App '${{ env.CONTAINER_APP_NAME }}' is not ready or does not exist. Skipping deploy."
+            exit 0 # จบแบบสวยๆ ไม่ถือเป็น Error
           fi
 
+          # 3. ถ้าเจอแอปแล้ว ค่อยสั่ง Set Secret และ Update
           az containerapp secret set \
             --name ${{ env.CONTAINER_APP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
