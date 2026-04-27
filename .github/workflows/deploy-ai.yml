@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  ACR_NAME: passiontreecontainerregistry
+  ACR_NAME: passiontreeacr
   IMAGE_NAME: passion-tree-ai
   RESOURCE_GROUP: Passion-Tree
   CONTAINER_APP_NAME: passion-tree-ai-service
@@ -17,7 +17,7 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -29,38 +29,40 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Build and Push to ACR
-        run: |
-          ACR_SERVER="${{ env.ACR_NAME }}.azurecr.io"
-          TAG="${{ github.sha }}"
-          
-          az acr login --name ${{ env.ACR_NAME }}
-          docker build . -t $ACR_SERVER/${{ env.IMAGE_NAME }}:$TAG
-          docker push $ACR_SERVER/${{ env.IMAGE_NAME }}:$TAG
+      - name: Login to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
 
-      - name: Set Container App Secrets
+      - name: Build and Push Image
         run: |
+          IMAGE_TAG="${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          docker build . -t $IMAGE_TAG
+          docker push $IMAGE_TAG
+          docker tag $IMAGE_TAG ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+
+      - name: Deploy to Container App
+        run: |
+          if ! az containerapp show --name ${{ env.CONTAINER_APP_NAME }} --resource-group ${{ env.RESOURCE_GROUP }} &>/dev/null; then
+            echo "Container App not yet created by Terraform — skipping deploy"
+            exit 0
+          fi
+
           az containerapp secret set \
             --name ${{ env.CONTAINER_APP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --secrets \
-              "azuresql-password=${{ secrets.AZURESQL_PASSWORD }}" \
               "groq-key=${{ secrets.GROQ_API_KEY }}" \
               "jina-key=${{ secrets.JINA_API_KEY }}" \
               "qdrant-key=${{ secrets.QDRANT_API_KEY }}"
 
-      - name: Deploy to Container App
-        uses: azure/container-apps-deploy-action@v1
-        with:
-          imageToDeploy: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          resourceGroup: ${{ env.RESOURCE_GROUP }}
-          containerAppName: ${{ env.CONTAINER_APP_NAME }}
-          environmentVariables: |
-            AI_PORT=${{ secrets.AI_PORT }}
-            REDIS_URL=${{ secrets.REDIS_URL }}
-            AZURESQL_SERVER=${{ secrets.AZURESQL_SERVER }}
-            QDRANT_URL=${{ secrets.QDRANT_URL }}
-            AZURESQL_PASSWORD=secretref:azuresql-password
-            GROQ_API_KEY=secretref:groq-key
-            JINA_API_KEY=secretref:jina-key
-            QDRANT_API_KEY=secretref:qdrant-key
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+            --set-env-vars \
+              "QDRANT_URL=${{ secrets.QDRANT_URL }}" \
+              "APP_URL=https://api.passion-tree.org" \
+              "AI_SERVICE_URL=https://passion-tree-ai-service" \
+              "GROQ_API_KEY=secretref:groq-key" \
+              "JINA_API_KEY=secretref:jina-key" \
+              "QDRANT_API_KEY=secretref:qdrant-key"
