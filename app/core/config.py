@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379"
     MODEL_CACHE_DIR: str = "./models/cache"
 
+    # Recommendation tuning
+    REC_MIN_BEHAVIOR_WEIGHT: float = 0.2
+    REC_MAX_BEHAVIOR_WEIGHT: float = 0.8
+    REC_FULL_BEHAVIOR_DENSITY: float = 10.0
+
     # Create a property to check if the environment is development
     @property
     def is_dev(self) -> bool:

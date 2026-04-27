@@ -9,9 +9,8 @@ from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from qdrant_client import QdrantClient
 from app.core.llm_client import call_groq_api
-from app.core.reranker_store import get_reranker_service
+from app.core.reranker_store import get_reranker_service, RerankerUnavailableError
 from .schema import SentimentRequest, SentimentResponse, LLMAnalysis, Advanced, DevelopmentPlan
-from tenacity import retry, stop_after_attempt, wait_fixed, RetryError
 
 logger = logging.getLogger(__name__)
 
@@ -52,24 +51,26 @@ class SentimentService:
 
         # Retry mechanism with feedback loop
         max_attempts = 3
-        last_error = None
-        
+        last_error: str | None = None
+        final_analysis: dict | None = None
+
         for attempt in range(max_attempts):
             try:
                 prompt = self._build_reflection_prompt(request, context_str, previous_error=last_error)
                 raw_text = await call_groq_api(prompt)
                 final_analysis = self._validate_and_clean_analysis(raw_text, request)
-                break  # Success - exit retry loop
+                break
             except Exception as e:
                 last_error = str(e)
                 logger.warning(f"Attempt {attempt + 1}/{max_attempts} failed: {e}")
-                if attempt == max_attempts - 1:
-                    logger.error("All retries exhausted. Returning fallback response.")
-                await asyncio.sleep(2)
-        else:
-            # This shouldn't happen but just in case
-            logger.error(f"Failed to get valid analysis after all retries")
+                # Only back off between attempts, not after the last one.
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(2)
 
+        if final_analysis is None:
+            logger.error(
+                f"Failed to get valid analysis after {max_attempts} attempts. Last error: {last_error}"
+            )
             return SentimentResponse(
                 summary="Unable to analyze reflection at this moment. Please try again later.",
                 sentiment_analysis="Neutral",
@@ -79,7 +80,7 @@ class SentimentService:
                 reflection_score=0.0,
                 weighted_reflection_score=0.0
             )
-        
+
         # Extract fields from LLM response (validated by Pydantic)
         reflection_score = final_analysis["score"]
         sentiment = final_analysis["sentiment"]
@@ -298,7 +299,11 @@ Response:
             raise ValueError(f"Schema validation failed: {str(e)}. Please ensure all required fields are present with correct types.")
 
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
-        """Rerank search results using Jina Reranker API."""
+        """Rerank search results using Jina Reranker API.
+
+        Falls back to the original vector-search order if the reranker is
+        unavailable.
+        """
         if not results:
             return []
 
@@ -307,9 +312,17 @@ Response:
             for hit in results
         ]
 
-        scores = self.reranker.predict(pairs)
+        try:
+            scores = self.reranker.predict(pairs)
+        except RerankerUnavailableError:
+            logger.warning(
+                "Reranker unavailable; falling back to vector-search order for top %d results",
+                top_k,
+            )
+            return results[:top_k]
+
         results_with_scores = list(zip(results, scores))
         results_with_scores.sort(key=lambda x: x[1], reverse=True)
-        final_results = [hit for hit, score in results_with_scores[:top_k]]
+        final_results = [hit for hit, _ in results_with_scores[:top_k]]
 
         return final_results

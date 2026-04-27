@@ -4,7 +4,7 @@ from app.features.search.repository import SearchRepository
 from app.core.embedding import EmbeddingService
 from app.features.search.schemas import SearchResponse
 from app.core.vector_database import get_qdrant_client, create_collection_if_not_exists
-from app.core.reranker_store import get_reranker_service
+from app.core.reranker_store import get_reranker_service, RerankerUnavailableError
 from qdrant_client import QdrantClient
 import asyncio
 import logging
@@ -88,8 +88,26 @@ class SearchService:
             payload=payload
         )
 
-    async def sync_delete(self, collection_name: str, path_id: int):
+    async def sync_delete(self, collection_name: str, path_id: str):
         self.repository.delete_point(collection_name, path_id)
+
+    def list_all_ids(self, collection_name: str) -> List[str]:
+        """Return every point id in a collection (used for reconciliation)."""
+        client = get_qdrant_client()
+        ids: List[str] = []
+        next_page = None
+        while True:
+            points, next_page = client.scroll(
+                collection_name=collection_name,
+                limit=256,
+                offset=next_page,
+                with_payload=False,
+                with_vectors=False,
+            )
+            ids.extend(str(p.id) for p in points)
+            if next_page is None:
+                break
+        return ids
 
     def initialize_collections(self, collection_name: str = "learning_paths", vector_size: int = 384):
         """Initialize required Qdrant collections."""
@@ -97,25 +115,37 @@ class SearchService:
         logger.info(f"Collection '{collection_name}' initialized successfully")
 
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
-        """Rerank search results using Jina Reranker API."""
+        """Rerank search results using Jina Reranker API.
+
+        Falls back to the original vector-search order if the reranker is
+        unavailable — better to return slightly lower-quality ranking than
+        corrupt the order with neutral fake scores.
+        """
         if not results:
             return []
-        
+
         # Build query-document pairs for reranking
         pairs = [
-            [query, hit.payload.get('title', '')] 
+            [query, hit.payload.get('title', '')]
             for hit in results
         ]
-        
+
         reranker = get_reranker_service()
-        scores = reranker.predict(pairs)
-        
+        try:
+            scores = reranker.predict(pairs)
+        except RerankerUnavailableError:
+            logger.warning(
+                "Reranker unavailable; falling back to vector-search order for top %d results",
+                top_k,
+            )
+            return results[:top_k]
+
         # Combine results with reranker scores and sort
         results_with_scores = list(zip(results, scores))
         results_with_scores.sort(key=lambda x: x[1], reverse=True)
-        
+
         # Return top_k reranked results
-        final_results = [hit for hit, score in results_with_scores[:top_k]]
+        final_results = [hit for hit, _ in results_with_scores[:top_k]]
         
         logger.info(f"Reranked {len(results)} results, returning top {len(final_results)}")
         return final_results

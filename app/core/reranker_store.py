@@ -5,9 +5,19 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+class RerankerUnavailableError(Exception):
+    """Raised when the Jina reranker cannot produce real scores.
+
+    Callers should catch this and fall back to the upstream (vector-search)
+    ordering rather than use neutral scores, which would corrupt any
+    downstream threshold or ranking logic.
+    """
+
+
 class JinaRerankerService:
     """Jina Reranker API service for reranking search results."""
-    
+
     def __init__(self):
         self.api_url = "https://api.jina.ai/v1/rerank"
         self.model = "jina-reranker-v2-base-multilingual"
@@ -15,30 +25,34 @@ class JinaRerankerService:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {settings.JINA_API_KEY}"
         }
-    
+
     def predict(self, pairs: List[List[str]]) -> List[float]:
         """Rerank query-document pairs using Jina API.
-        
+
         Args:
             pairs: List of [query, document] pairs
-            
+
         Returns:
-            List of relevance scores
+            List of relevance scores aligned with the input order.
+
+        Raises:
+            RerankerUnavailableError: if the Jina API call fails. Callers
+                should fall back to the upstream ordering.
         """
         if not pairs:
             return []
-        
+
         # Extract query (same for all pairs) and documents
         query = pairs[0][0]
         documents = [pair[1] for pair in pairs]
-        
+
         payload = {
             "model": self.model,
             "query": query,
             "documents": documents,
             "top_n": len(documents)  # Return all documents with scores
         }
-        
+
         try:
             response = requests.post(
                 self.api_url,
@@ -47,9 +61,9 @@ class JinaRerankerService:
                 timeout=30
             )
             response.raise_for_status()
-            
+
             results = response.json()
-            
+
             # Jina returns results sorted by relevance_score
             # We need to map them back to original order
             scores = [0.0] * len(documents)
@@ -57,17 +71,16 @@ class JinaRerankerService:
                 idx = result["index"]
                 score = result["relevance_score"]
                 scores[idx] = score
-            
+
             logger.info(f"Reranker: Completed (score range: [{min(scores):.3f}, {max(scores):.3f}])")
             return scores
-            
+
         except requests.exceptions.RequestException as e:
             logger.error(f"Jina Reranker API error: {e}")
-            # Return neutral scores on error
-            return [0.5] * len(documents)
+            raise RerankerUnavailableError(f"Jina API request failed: {e}") from e
         except Exception as e:
             logger.error(f"Unexpected error in Jina reranking: {e}")
-            return [0.5] * len(documents)
+            raise RerankerUnavailableError(f"Jina reranking unexpected error: {e}") from e
 
 # Singleton instance
 _reranker_service = None

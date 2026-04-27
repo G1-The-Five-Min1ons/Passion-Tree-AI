@@ -5,7 +5,7 @@ from qdrant_client import QdrantClient
 from app.core.embedding import EmbeddingService
 from app.core.vector_database import get_qdrant_client
 from app.core.llm_client import call_groq_api
-from app.core.reranker_store import get_reranker_service
+from app.core.reranker_store import get_reranker_service, RerankerUnavailableError
 from app.features.search.repository import SearchRepository
 from app.features.generator import prompts
 from .schema import GenerateRequest, GenerateResponse
@@ -103,16 +103,24 @@ class GeneratorService:
     def _rerank_results(self, query: str, results: list, top_k: int = 5) -> list:
         if not results:
             return []
-        
+
         pairs = [
-            [query, f"{hit.payload.get('question', '')} {hit.payload.get('answer', '')}"] 
+            [query, f"{hit.payload.get('question', '')} {hit.payload.get('answer', '')}"]
             for hit in results
         ]
-        
+
         reranker = get_reranker_service()
-        scores = reranker.predict(pairs)
+        try:
+            scores = reranker.predict(pairs)
+        except RerankerUnavailableError:
+            logger.warning(
+                "Reranker unavailable; falling back to vector-search order for top %d results",
+                top_k,
+            )
+            return results[:top_k]
+
         results_with_scores = list(zip(results, scores))
         results_with_scores.sort(key=lambda x: x[1], reverse=True)
-        final_results = [hit for hit, score in results_with_scores[:top_k]]
-        
+        final_results = [hit for hit, _ in results_with_scores[:top_k]]
+
         return final_results
