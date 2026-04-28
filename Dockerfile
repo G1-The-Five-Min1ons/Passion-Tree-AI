@@ -16,8 +16,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app ./app
 
-# Create cache directory for models
+# Create cache directory and pre-download ONNX model at build time
 RUN mkdir -p /app/models/cache
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='sentence-transformers/all-MiniLM-L6-v2', cache_dir='./models/cache')"
 
 # Use non-root user
 RUN useradd -u 10001 -r -s /usr/sbin/nologin appuser && \
