@@ -8,10 +8,7 @@ uvicorn[standard]>=0.30.0
 qdrant-client>=1.11.0
 redis>=5.0.0
 
-# Embedding (FastEmbed - local model, no external API)
-fastembed>=0.3.0
-
-# HTTP Client for API calls
+# HTTP Client for API calls (also used for Jina embeddings API)
 requests>=2.31.0
 
 # AI & LLM

@@ -1,0 +1,38 @@
+# Render Blueprint for Passion-Tree AI service.
+# Deploy with: connect this repo on Render and pick "Blueprint".
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: passion-tree-ai
+    runtime: docker
+    plan: starter           # Free (512MB) may OOM under load; Starter = 512MB always-on / $7. Bump to Standard for prod traffic.
+    region: singapore       # Pick the region closest to your backend / users.
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: QDRANT_URL
+        sync: false         # Set in Render dashboard (secret).
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: JINA_API_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: passion-tree-ai-redis
+          property: connectionString
+      - key: MODEL_CACHE_DIR
+        value: /app/models/cache
+
+  - type: keyvalue          # Render-managed Redis-compatible store.
+    name: passion-tree-ai-redis
+    plan: free              # 25MB / no persistence; fine for embedding/LLM cache.
+    region: singapore
+    ipAllowList: []         # Empty = only reachable from services in this blueprint.

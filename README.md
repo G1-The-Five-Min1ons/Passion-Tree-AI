@@ -54,6 +54,38 @@ docker push $Registry/ai-fastapi:latest
 - Update ai_image in terraform.tfvars to your ACR path.
 - Apply Terraform as documented in infrastructure README.
 
+## Production: Render (recommended)
+
+The repo ships a `render.yaml` blueprint that provisions:
+
+- a Docker web service (`passion-tree-ai`) running this Dockerfile
+- a Render Key Value (Redis-compatible) store, wired via `REDIS_URL`
+
+### One-time setup
+
+1. Push this repo to GitHub (Render reads the blueprint from the repo root).
+2. In Render → New → Blueprint → connect the repo. Render parses `render.yaml`.
+3. Fill the secrets marked `sync: false` in the dashboard:
+   - `QDRANT_URL`, `QDRANT_API_KEY`
+   - `GROQ_API_KEY`
+   - `JINA_API_KEY`
+4. Click Apply. First build takes ~3–5 min.
+
+### After deploy
+
+- Service URL: `https://passion-tree-ai.onrender.com` (Render assigns it).
+- Health check: `GET /api/v1/health`.
+- Update the Go backend's `AI_SERVICE_URL` env to that URL
+  (see `.github/workflows/deploy-go.yml` and your runtime config).
+
+### Notes
+
+- The Dockerfile binds to `$PORT` (Render injects it) and falls back to 8000 locally.
+- `fastembed` was removed; embeddings now go through Jina API
+  (set `JINA_API_KEY`). Image is much smaller and cold start is faster.
+- Render Free plan sleeps after 15 min of inactivity. Use Starter ($7/mo)
+  for always-on if cold starts hurt.
+
 ## Notes
 
-- Ensure GROQ_API_KEY, REDIS_URL, and DB_URL are provided by environment/secrets in Terraform.
+- Ensure GROQ_API_KEY, JINA_API_KEY, QDRANT_*, and REDIS_URL are provided by environment/secrets.
