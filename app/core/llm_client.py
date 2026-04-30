@@ -1,6 +1,6 @@
 import os
 import logging
-from groq import AsyncGroq
+from anthropic import AsyncAnthropic
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
@@ -9,22 +9,22 @@ class GroqClientStore:
     _client = None
 
     @classmethod
-    def get_client(cls) -> AsyncGroq:
+    def get_client(cls) -> AsyncAnthropic:
         if cls._client is None:
-            api_key = "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"
-            if not api_key:
+            GROQ_API_KEY = "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"
+            if not GROQ_API_KEY:
                 logger.warning("GROQ_API_KEY is missing via os.environ")
-            
-            cls._client = AsyncGroq(api_key=api_key)
-            
+
+            cls._client = AsyncAnthropic(api_key=GROQ_API_KEY)
+
         return cls._client
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-async def call_groq_api(prompt: str, model: str = "llama-3.3-70b-versatile") -> str:
+async def call_groq_api(prompt: str, model: str = "claude-haiku-4-5") -> str:
     try:
         client = GroqClientStore.get_client()
 
-        chat_completion = await client.chat.completions.create(
+        message = await client.messages.create(
             messages=[
                 {
                     "role": "user",
@@ -32,12 +32,11 @@ async def call_groq_api(prompt: str, model: str = "llama-3.3-70b-versatile") -> 
                 }
             ],
             model=model,
-            temperature=0.3,
             max_tokens=1024,
         )
 
-        return chat_completion.choices[0].message.content
+        return message.content[0].text
 
     except Exception as e:
-        logger.error(f"Groq API Error: {e}", exc_info=True)
+        logger.error(f"Anthropic API Error: {e}", exc_info=True)
         raise e
