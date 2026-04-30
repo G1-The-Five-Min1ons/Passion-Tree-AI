@@ -9,7 +9,7 @@ class GroqClient(BaseClient):
             api_key=settings.GROQ_API_KEY
         )
 
-    async def get_chat_completion(self, prompt: str, model: str = "llama3-8b-8192"):
+    async def get_chat_completion(self, prompt: str, model: str = "llama-3.3-70b-versatile"):
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],

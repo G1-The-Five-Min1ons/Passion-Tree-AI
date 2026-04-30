@@ -15,5 +15,4 @@ fastembed>=0.3.0
 requests>=2.31.0
 
 # AI & LLM
-anthropic>=0.40.0
 tenacity>=8.0.0
