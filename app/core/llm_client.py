@@ -11,7 +11,7 @@ class GroqClientStore:
     @classmethod
     def get_client(cls) -> AsyncGroq:
         if cls._client is None:
-            api_key = "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"
+            api_key = "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"
             if not api_key:
                 logger.warning("GROQ_API_KEY is missing via os.environ")
             
