@@ -1,3 +1,13 @@
+---
+title: Passion Tree AI
+emoji: 🌳
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: 8000
+pinned: false
+---
+
 # Passion-Tree AI (FastAPI)
 
 ## Dev: Run with Docker hot-reload
