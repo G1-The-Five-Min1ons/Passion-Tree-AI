@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     QDRANT_TIMEOUT: int = 10
     GROQ_API_KEY: Optional[str] = "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"
     JINA_API_KEY: Optional[str] = "jina_978f1b54afbd4b69ae3fbda212034935ZHZgBFogV6BGnoRaxrqzAUxeG2qY"
+    HF_TOKEN: Optional[str] = "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"
     REDIS_URL: str = "redis://redis:6379"
     MODEL_CACHE_DIR: str = "./models/cache"
 

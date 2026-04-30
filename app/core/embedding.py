@@ -7,7 +7,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 JINA_API_URL = "https://api.jina.ai/v1/embeddings"
-JINA_MODEL = "jina-embeddings-v5-text-small"
+JINA_MODEL = "jina-embeddings-v3"
 JINA_DIMENSIONS = 384
 JINA_TIMEOUT = 30
 

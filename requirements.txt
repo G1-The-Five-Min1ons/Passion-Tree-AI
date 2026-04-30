@@ -8,8 +8,11 @@ uvicorn[standard]>=0.30.0
 qdrant-client>=1.11.0
 redis>=5.0.0
 
-# HTTP Client for API calls (also used for Jina embeddings API)
+# HTTP Client for API calls
 requests>=2.31.0
+
+# HuggingFace Inference API (embeddings)
+huggingface_hub>=0.24.0
 
 # AI & LLM
 anthropic>=0.40.0
