@@ -1,7 +1,8 @@
-import os
 import logging
 from anthropic import AsyncAnthropic
 from tenacity import retry, stop_after_attempt, wait_fixed
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -11,11 +12,10 @@ class GroqClientStore:
     @classmethod
     def get_client(cls) -> AsyncAnthropic:
         if cls._client is None:
-            GROQ_API_KEY = "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"
-            if not GROQ_API_KEY:
-                logger.warning("GROQ_API_KEY is missing via os.environ")
+            if not settings.GROQ_API_KEY:
+                logger.warning("GROQ_API_KEY is missing")
 
-            cls._client = AsyncAnthropic(api_key=GROQ_API_KEY)
+            cls._client = AsyncAnthropic(api_key=settings.GROQ_API_KEY)
 
         return cls._client
 
