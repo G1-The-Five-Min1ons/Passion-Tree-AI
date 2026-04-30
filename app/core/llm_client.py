@@ -11,7 +11,7 @@ class GroqClientStore:
     @classmethod
     def get_client(cls) -> AsyncAnthropic:
         if cls._client is None:
-            GROQ_API_KEY = "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"
+            GROQ_API_KEY = "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"
             if not GROQ_API_KEY:
                 logger.warning("GROQ_API_KEY is missing via os.environ")
 
