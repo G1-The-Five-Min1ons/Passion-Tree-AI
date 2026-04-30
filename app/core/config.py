@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     QDRANT_URL: str
     QDRANT_API_KEY: Optional[str] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.9sk0CaAuLIKcDVHep2pvyiCH0NP1mugNqng6HLSD_QY"
     QDRANT_TIMEOUT: int = 10
-    GROQ_API_KEY: Optional[str] = "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"
+    GROQ_API_KEY: Optional[str] = "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"
     JINA_API_KEY: Optional[str] = "jina_978f1b54afbd4b69ae3fbda212034935ZHZgBFogV6BGnoRaxrqzAUxeG2qY"
     REDIS_URL: str = "redis://redis:6379"
     MODEL_CACHE_DIR: str = "./models/cache"
